@@ -222,7 +222,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return Math.abs(hash).toString(16);
   };
 
-  const loginWithCredentials = async (usernameOrEmail: string, password: string) => {
+  const loginWithCredentials = async (usernameOrEmail: string, passwordInput: string) => {
     const found = users.find(u => 
       u.username?.toLowerCase() === usernameOrEmail.toLowerCase() || 
       u.email?.toLowerCase() === usernameOrEmail.toLowerCase()
@@ -230,6 +230,14 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!found) {
       return { success: false, message: 'Akun tidak ditemukan dalam sistem.' };
     }
+
+    const hashedInput = sha256(passwordInput);
+    const userPassword = found.password || 'jerjhon123';
+
+    if (passwordInput !== userPassword && hashedInput !== userPassword) {
+      return { success: false, message: 'Password salah. Silakan periksa kembali password Anda.' };
+    }
+
     setCurrentUser(found);
     setStored('currentUser', found);
     addAuditLog('USER_LOGIN', 'Auth', `User ${found.name} logged in successfully.`);
