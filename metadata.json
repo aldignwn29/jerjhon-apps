@@ -1,0 +1,11 @@
+{
+  "name": "Apps Jerjhon",
+  "description": "Comprehensive Enterprise ERP system featuring Human Capital, Marketplace Sales, Inventory, Finance \u0026 Accounting, Product Development, KPI, CRM, and Executive Analytics.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
