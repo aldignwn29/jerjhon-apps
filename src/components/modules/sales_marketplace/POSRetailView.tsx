@@ -336,7 +336,7 @@ export const POSRetailView: React.FC = () => {
   const [receiptStoreAddress, setReceiptStoreAddress] = useState('Jl. Raya Sport & Activewear No. 88, Cikarang');
   const [receiptFooterMessage, setReceiptFooterMessage] = useState('Terima kasih atas kunjungan Anda! Barang yang sudah dibeli tidak dapat ditukar.');
 
-  const [shiftActive, setShiftActive] = useState(false);
+  const [shiftActive, setShiftActive] = useState(true);
   const [shiftStartingCash, setShiftStartingCash] = useState(500000);
   const [shiftTotalSales, setShiftTotalSales] = useState(0);
   const [shiftCashierName, setShiftCashierName] = useState('Jhony (Supervisor)');
@@ -2511,6 +2511,16 @@ export const POSRetailView: React.FC = () => {
           >
             <List className="w-4 h-4 text-emerald-500" />
             <span>Laporan Penjualan</span>
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('management');
+            }}
+            className="px-3.5 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-2 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 ml-1 cursor-pointer"
+            title="Akhiri / Tutup Shift Kasir"
+          >
+            <Lock className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+            <span className="hidden sm:inline">Akhiri Shift</span>
           </button>
           <button
             onClick={() => setGlobalActiveTab('inventory_products')}

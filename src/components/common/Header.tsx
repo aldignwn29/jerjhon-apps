@@ -124,10 +124,10 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
 
-          {/* Install App Button (Desktop & Mobile) */}
+          {/* Install App Button (Desktop & Tablet) */}
           <button
             onClick={() => setShowInstallModal(true)}
-            className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-3 py-2 rounded-xl text-xs font-bold transition-all border border-slate-200 dark:border-slate-700 active:scale-95 shadow-xs"
+            className="hidden sm:flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-3 py-2 rounded-xl text-xs font-bold transition-all border border-slate-200 dark:border-slate-700 active:scale-95 shadow-xs"
             title="Instal Aplikasi ke Desktop & HP"
           >
             <Download className="w-4 h-4 text-rose-600 shrink-0" />
@@ -138,7 +138,7 @@ export const Header: React.FC<HeaderProps> = ({
           {isAdmin && (
             <button
               onClick={openConflictWizard}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all border cursor-pointer active:scale-95 shadow-xs ${
+              className={`hidden md:flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all border cursor-pointer active:scale-95 shadow-xs ${
                 pendingConflictsCount > 0
                   ? 'bg-amber-500 text-slate-950 border-amber-600 animate-pulse'
                   : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'
@@ -158,7 +158,7 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Refresh App Button */}
           <button
             onClick={() => window.location.reload()}
-            className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 p-2 sm:px-3 sm:py-2 rounded-xl text-xs font-bold transition-all border border-slate-200 dark:border-slate-700 active:scale-95 shadow-xs"
+            className="hidden lg:flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-3 py-2 rounded-xl text-xs font-bold transition-all border border-slate-200 dark:border-slate-700 active:scale-95 shadow-xs"
             title="Muat Ulang / Refresh Aplikasi"
           >
             <RefreshCw className="w-4 h-4 text-blue-600 shrink-0 animate-spin-hover" />
