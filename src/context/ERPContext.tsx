@@ -207,7 +207,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Auth state
   const [users, setUsers] = useState<User[]>(() => getStored('users', INITIAL_USERS));
-  const [currentUser, setCurrentUser] = useState<User | null>(() => getStored('currentUser', INITIAL_USERS[0]));
+  const [currentUser, setCurrentUser] = useState<User | null>(() => getStored('currentUser', null));
 
   const isAuthenticated = !!currentUser;
 
