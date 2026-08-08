@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ERPProvider, useERP } from './context/ERPContext';
 import { useRoleGuard } from './hooks/useRoleGuard';
 import { Header } from './components/common/Header';
@@ -65,7 +65,36 @@ import { DevCodeExporterView } from './components/modules/dev_export/DevCodeExpo
 import { LoginView } from './components/auth/LoginView';
 
 const MainLayout: React.FC = () => {
-  const { activeTab, setActiveTab, isAuthenticated, currentUser, isStaff, isInitialSyncing } = useERP();
+  const { activeTab, setActiveTab, isAuthenticated, currentUser, isStaff, isInitialSyncing, logout } = useERP();
+
+  // Idle timeout: auto logout after 30 minutes of inactivity
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    let timeoutId: NodeJS.Timeout;
+
+    const resetTimer = () => {
+      clearTimeout(timeoutId);
+      // 30 minutes = 30 * 60 * 1000 ms
+      timeoutId = setTimeout(() => {
+        logout();
+      }, 30 * 60 * 1000);
+    };
+
+    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
+    events.forEach(event => {
+      window.addEventListener(event, resetTimer);
+    });
+
+    resetTimer();
+
+    return () => {
+      clearTimeout(timeoutId);
+      events.forEach(event => {
+        window.removeEventListener(event, resetTimer);
+      });
+    };
+  }, [isAuthenticated, logout]);
   
   // Call all hooks unconditionally
   const { guardResult } = useRoleGuard(activeTab);

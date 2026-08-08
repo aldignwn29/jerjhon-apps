@@ -17,6 +17,7 @@ import {
   INITIAL_NOTIFICATIONS, INITIAL_SYSTEM_ROLES, INITIAL_RAW_MATERIAL_GROUPS,
   INITIAL_EVENTS
 } from '../data/initialData';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 interface ERPContextType {
   darkMode: boolean;
@@ -210,6 +211,130 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [currentUser, setCurrentUser] = useState<User | null>(() => getStored('currentUser', null));
 
   const isAuthenticated = !!currentUser;
+
+  // Supabase live sync effect
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    async function fetchSupabaseData() {
+      try {
+        const [
+          prodRes,
+          ordRes,
+          empRes,
+          supRes,
+          poRes,
+          auditRes,
+          notifRes
+        ] = await Promise.all([
+          supabase.from('products').select('*'),
+          supabase.from('marketplace_orders').select('*'),
+          supabase.from('employees').select('*'),
+          supabase.from('suppliers').select('*'),
+          supabase.from('purchase_orders').select('*'),
+          supabase.from('system_audit_logs').select('*'),
+          supabase.from('notifications').select('*')
+        ]);
+
+        if (prodRes.data && prodRes.data.length > 0) {
+          const loadedProducts = prodRes.data.map((p: any) => ({
+            id: p.id,
+            sku: p.sku,
+            name: p.name,
+            category: p.category,
+            warehouse: p.warehouse || 'Gudang Pusat',
+            stockQuantity: p.stock || 10,
+            minimumStock: p.min_stock || 5,
+            safetyStock: 5,
+            unitCostPrice: Number(p.cost) || 0,
+            sellingPrice: Number(p.price) || 0,
+            unit: 'Pcs',
+            status: 'Ready',
+            lastUpdated: new Date().toISOString()
+          }));
+          setProducts(loadedProducts);
+          setStored('products', loadedProducts);
+        }
+
+        if (ordRes.data && ordRes.data.length > 0) {
+          const loadedOrders = ordRes.data.map((o: any) => ({
+            id: o.id,
+            orderNumber: o.id,
+            channel: o.channel || 'POS Retail',
+            customerName: o.customer_name,
+            customerPhone: o.customer_phone || '-',
+            orderDate: o.created_at || new Date().toISOString(),
+            skuCode: 'SKU-001',
+            productName: 'Custom Item',
+            quantity: 1,
+            unitPrice: Number(o.total_amount),
+            grossAmount: Number(o.total_amount),
+            voucherDiscount: 0,
+            marketplaceAdminFee: 0,
+            adsCost: 0,
+            shippingFee: 0,
+            cogs: 0,
+            variant: '-',
+            netProfit: Number(o.total_amount) * 0.35,
+            status: 'Selesai',
+            paymentMethod: o.payment_method || 'Cash / QRIS'
+          }));
+          setMarketplaceOrders(loadedOrders);
+          setStored('marketplaceOrders', loadedOrders);
+        }
+
+        if (empRes.data && empRes.data.length > 0) {
+          const loadedEmps = empRes.data.map((e: any) => ({
+            id: e.id,
+            name: e.name,
+            email: e.email,
+            role: e.role,
+            department: e.department,
+            status: e.status,
+            phone: e.phone,
+            hireDate: e.hire_date,
+            salary: Number(e.salary),
+            avatar: e.avatar
+          }));
+          setEmployees(loadedEmps);
+          setStored('employees', loadedEmps);
+        }
+
+        if (supRes.data && supRes.data.length > 0) {
+          const loadedSups = supRes.data.map((s: any) => ({
+            id: s.id,
+            name: s.name,
+            contactPerson: s.contact_person,
+            email: s.email,
+            phone: s.phone,
+            address: s.address,
+            rating: Number(s.rating)
+          }));
+          setSuppliers(loadedSups);
+          setStored('suppliers', loadedSups);
+        }
+
+        if (poRes.data && poRes.data.length > 0) {
+          const loadedPOs = poRes.data.map((p: any) => ({
+            id: p.id,
+            supplierId: p.supplier_id,
+            supplierName: p.supplier_name,
+            status: p.status,
+            totalAmount: Number(p.total_amount),
+            items: p.items || [],
+            orderDate: p.order_date,
+            expectedDelivery: p.expected_delivery
+          }));
+          setPurchaseOrders(loadedPOs);
+          setStored('purchaseOrders', loadedPOs);
+        }
+      } catch (err) {
+        console.error('Supabase sync warning:', err);
+      }
+    }
+
+    fetchSupabaseData();
+  }, []);
 
   // Simple sha256 hash helper
   const sha256 = (str: string) => {
@@ -553,7 +678,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Marketplace & Sales
   const [marketplaceOrders, setMarketplaceOrders] = useState<MarketplaceOrder[]>(() => getStored('marketplaceOrders', INITIAL_MARKETPLACE_ORDERS));
-  const addMarketplaceOrder = (order: Omit<MarketplaceOrder, 'id' | 'netProfit'>) => {
+  const addMarketplaceOrder = async (order: Omit<MarketplaceOrder, 'id' | 'netProfit'>) => {
     const netProfit = (order.grossAmount || 0) * 0.35;
     const newOrd: MarketplaceOrder = {
       id: `ORD-${Date.now()}`,
@@ -563,6 +688,23 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const updated = [newOrd, ...marketplaceOrders];
     setMarketplaceOrders(updated);
     setStored('marketplaceOrders', updated);
+
+    if (isSupabaseConfigured) {
+      try {
+        await supabase.from('marketplace_orders').upsert({
+          id: newOrd.id,
+          customer_name: newOrd.customerName,
+          customer_email: 'customer@example.com',
+          channel: newOrd.channel,
+          status: newOrd.status,
+          total_amount: newOrd.grossAmount,
+          items: [],
+          payment_method: newOrd.paymentMethod
+        });
+      } catch (err) {
+        console.error('Supabase addMarketplaceOrder error:', err);
+      }
+    }
   };
 
   const updateMarketplaceOrder = (id: string, orderData: Partial<MarketplaceOrder>) => {
@@ -586,7 +728,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Inventory & Products
   const [products, setProducts] = useState<ProductItem[]>(() => getStored('products', INITIAL_PRODUCTS));
-  const addProduct = (prodData: Omit<ProductItem, 'id'> & { id?: string }) => {
+  const addProduct = async (prodData: Omit<ProductItem, 'id'> & { id?: string }) => {
     const newProd: ProductItem = {
       id: prodData.id || `PRD-${Date.now()}`,
       ...prodData
@@ -595,6 +737,26 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setProducts(updated);
     setStored('products', updated);
     addAuditLog('CREATE_PRODUCT', 'Inventory', `Added product ${newProd.name} (${newProd.sku})`);
+
+    if (isSupabaseConfigured) {
+      try {
+        await supabase.from('products').upsert({
+          id: newProd.id,
+          name: newProd.name,
+          sku: newProd.sku,
+          category: newProd.category,
+          price: newProd.sellingPrice,
+          cost: newProd.unitCostPrice,
+          stock: newProd.stockQuantity,
+          min_stock: newProd.minimumStock,
+          supplier: 'Default Supplier',
+          barcode: newProd.sku,
+          image: ''
+        });
+      } catch (err) {
+        console.error('Supabase addProduct error:', err);
+      }
+    }
   };
 
   const deleteProduct = (id: string) => {
@@ -717,7 +879,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setStored('purchaseOrders', updated);
   };
 
-  const [suppliers] = useState<Supplier[]>(() => getStored('suppliers', INITIAL_SUPPLIERS));
+  const [suppliers, setSuppliers] = useState<Supplier[]>(() => getStored('suppliers', INITIAL_SUPPLIERS));
 
   // Finance
   const [chartOfAccounts] = useState<ChartOfAccount[]>(() => getStored('chartOfAccounts', INITIAL_COA));
