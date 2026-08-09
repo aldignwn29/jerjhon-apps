@@ -8,8 +8,22 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ==============================================================================
--- 1. USERS & PROFILES MODULE
+-- 1. USERS & PROFILES MODULE (USER MANAGEMENT)
 -- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.users (
+    id TEXT PRIMARY KEY,
+    username TEXT,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'Admin',
+    department TEXT DEFAULT 'Management',
+    avatar TEXT,
+    status TEXT DEFAULT 'active',
+    last_login TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+    permissions JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS public.profiles (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,

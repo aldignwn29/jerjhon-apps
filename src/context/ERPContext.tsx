@@ -222,8 +222,21 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!isSupabaseConfigured) return { success: false, message: 'Supabase belum dikonfigurasi / URL placeholder.' };
     setIsSyncingSupabase(true);
     try {
-      // 0. Sync Profiles (Users)
+      // 0. Sync Users & Profiles (User Management)
       for (const u of users) {
+        await supabase.from('users').upsert({
+          id: u.id,
+          username: u.username || u.email,
+          name: u.name || 'User',
+          email: u.email || 'user@example.com',
+          role: u.role || 'Admin',
+          department: u.department || 'Executive',
+          avatar: u.avatar || '',
+          status: u.status || 'active',
+          last_login: u.lastLogin || new Date().toISOString(),
+          permissions: u.permissions || []
+        });
+
         await supabase.from('profiles').upsert({
           id: u.id,
           name: u.name || 'User',
@@ -324,6 +337,8 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     async function fetchSupabaseData() {
       try {
         const [
+          usersRes,
+          profilesRes,
           prodRes,
           ordRes,
           empRes,
@@ -332,6 +347,8 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           auditRes,
           notifRes
         ] = await Promise.all([
+          supabase.from('users').select('*'),
+          supabase.from('profiles').select('*'),
           supabase.from('products').select('*'),
           supabase.from('marketplace_orders').select('*'),
           supabase.from('employees').select('*'),
@@ -340,6 +357,24 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           supabase.from('system_audit_logs').select('*'),
           supabase.from('notifications').select('*')
         ]);
+
+        const rawUserData = (usersRes.data && usersRes.data.length > 0) ? usersRes.data : profilesRes.data;
+        if (rawUserData && rawUserData.length > 0) {
+          const loadedUsers = rawUserData.map((u: any) => ({
+            id: u.id,
+            username: u.username || u.email || 'user',
+            name: u.name || 'User',
+            email: u.email || 'user@example.com',
+            role: u.role || 'Admin',
+            department: u.department || 'Executive',
+            avatar: u.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+            status: u.status || 'active',
+            lastLogin: u.last_login || new Date().toISOString(),
+            permissions: u.permissions || []
+          }));
+          setUsers(loadedUsers);
+          setStored('users', loadedUsers);
+        }
 
         if (prodRes.data && prodRes.data.length > 0) {
           const loadedProducts = prodRes.data.map((p: any) => ({
@@ -532,6 +567,19 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addAuditLog('CREATE_USER', 'Admin', `Created user account: ${newUser.name}`);
 
     if (isSupabaseConfigured) {
+      Promise.resolve(supabase.from('users').upsert({
+        id: newUser.id,
+        username: newUser.username || newUser.email,
+        name: newUser.name || 'User',
+        email: newUser.email || 'user@example.com',
+        role: newUser.role || 'Admin',
+        department: newUser.department || 'Executive',
+        avatar: newUser.avatar || '',
+        status: newUser.status || 'active',
+        last_login: newUser.lastLogin || new Date().toISOString(),
+        permissions: newUser.permissions || []
+      })).catch(err => console.error('Supabase user create error:', err));
+
       Promise.resolve(supabase.from('profiles').upsert({
         id: newUser.id,
         name: newUser.name || 'User',
@@ -556,6 +604,19 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (isSupabaseConfigured) {
       const targetUser = updated.find(u => u.id === id);
       if (targetUser) {
+        Promise.resolve(supabase.from('users').upsert({
+          id: targetUser.id,
+          username: targetUser.username || targetUser.email,
+          name: targetUser.name,
+          email: targetUser.email,
+          role: targetUser.role || 'Admin',
+          department: targetUser.department || 'Executive',
+          avatar: targetUser.avatar || '',
+          status: targetUser.status || 'active',
+          last_login: targetUser.lastLogin || new Date().toISOString(),
+          permissions: targetUser.permissions || []
+        })).catch(err => console.error('Supabase user update error:', err));
+
         Promise.resolve(supabase.from('profiles').upsert({
           id: targetUser.id,
           name: targetUser.name,
@@ -574,6 +635,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setStored('users', updated);
 
     if (isSupabaseConfigured) {
+      Promise.resolve(supabase.from('users').delete().eq('id', id)).catch(err => console.error('Supabase user delete error:', err));
       Promise.resolve(supabase.from('profiles').delete().eq('id', id)).catch(err => console.error('Supabase profile delete error:', err));
     }
   };
