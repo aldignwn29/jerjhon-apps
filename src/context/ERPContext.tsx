@@ -246,12 +246,29 @@ const safeNumber = (val: any, fallback = 0) => {
   return isNaN(num) ? fallback : num;
 };
 
+const isNetworkError = (err: any) => {
+  if (!err) return false;
+  const msg = typeof err === 'string' ? err : (err.message || JSON.stringify(err));
+  return msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('TypeError') || msg.includes('fetch');
+};
+
   const syncAllDataToSupabase = async () => {
     if (!isSupabaseConfigured) return { success: false, message: 'Supabase belum dikonfigurasi / URL placeholder.' };
     setIsSyncingSupabase(true);
-    const syncErrors: string[] = [];
 
     try {
+      // Test Supabase connection before looping
+      const { error: pingErr } = await supabase.from('users').select('id').limit(1);
+      if (pingErr && isNetworkError(pingErr)) {
+        setIsSyncingSupabase(false);
+        return {
+          success: false,
+          message: 'Server Supabase tidak dapat dijangkau (Failed to fetch). Pastikan koneksi internet atau status proyek Supabase aktif. Data Anda tetap tersimpan aman secara lokal.'
+        };
+      }
+
+      const syncErrors: string[] = [];
+
       // 0. Sync Users & Profiles (User Management)
       for (const u of users) {
         const userEmail = u.email || `user_${u.id}@company.com`;
@@ -268,8 +285,12 @@ const safeNumber = (val: any, fallback = 0) => {
           permissions: Array.isArray(u.permissions) ? u.permissions : []
         }, { onConflict: 'id' });
         if (userErr) {
+          if (isNetworkError(userErr)) {
+            setIsSyncingSupabase(false);
+            return { success: false, message: 'Koneksi ke Supabase terputus. Data Anda tersimpan di lokal.' };
+          }
           console.warn('Supabase users upsert notice:', userErr.message || userErr);
-          syncErrors.push(`Users (${u.name}): ${userErr.message || JSON.stringify(userErr)}`);
+          syncErrors.push(`Users (${u.name}): ${userErr.message || 'Error'}`);
         }
 
         const { error: profErr } = await supabase.from('profiles').upsert({
@@ -280,8 +301,9 @@ const safeNumber = (val: any, fallback = 0) => {
           department: u.department || 'Executive',
           avatar: u.avatar || ''
         }, { onConflict: 'id' });
-        if (profErr) {
-          console.warn('Supabase profiles upsert notice:', profErr.message || profErr);
+        if (profErr && isNetworkError(profErr)) {
+          setIsSyncingSupabase(false);
+          return { success: false, message: 'Koneksi ke Supabase terputus. Data Anda tersimpan di lokal.' };
         }
       }
 
@@ -301,8 +323,12 @@ const safeNumber = (val: any, fallback = 0) => {
           image: p.image || ''
         }, { onConflict: 'id' });
         if (prodErr) {
+          if (isNetworkError(prodErr)) {
+            setIsSyncingSupabase(false);
+            return { success: false, message: 'Koneksi ke Supabase terputus. Data Anda tersimpan di lokal.' };
+          }
           console.warn('Supabase products upsert notice:', prodErr.message || prodErr);
-          syncErrors.push(`Products (${p.name}): ${prodErr.message || JSON.stringify(prodErr)}`);
+          syncErrors.push(`Products (${p.name}): ${prodErr.message || 'Error'}`);
         }
       }
 
@@ -319,8 +345,12 @@ const safeNumber = (val: any, fallback = 0) => {
           payment_method: o.paymentMethod || 'Cash'
         }, { onConflict: 'id' });
         if (ordErr) {
+          if (isNetworkError(ordErr)) {
+            setIsSyncingSupabase(false);
+            return { success: false, message: 'Koneksi ke Supabase terputus. Data Anda tersimpan di lokal.' };
+          }
           console.warn('Supabase marketplace_orders upsert notice:', ordErr.message || ordErr);
-          syncErrors.push(`Orders (${o.id}): ${ordErr.message || JSON.stringify(ordErr)}`);
+          syncErrors.push(`Orders (${o.id}): ${ordErr.message || 'Error'}`);
         }
       }
 
@@ -340,8 +370,12 @@ const safeNumber = (val: any, fallback = 0) => {
           avatar: e.avatar || ''
         }, { onConflict: 'id' });
         if (empErr) {
+          if (isNetworkError(empErr)) {
+            setIsSyncingSupabase(false);
+            return { success: false, message: 'Koneksi ke Supabase terputus. Data Anda tersimpan di lokal.' };
+          }
           console.warn('Supabase employees upsert notice:', empErr.message || empErr);
-          syncErrors.push(`Employees (${e.name}): ${empErr.message || JSON.stringify(empErr)}`);
+          syncErrors.push(`Employees (${e.name}): ${empErr.message || 'Error'}`);
         }
       }
 
@@ -357,8 +391,12 @@ const safeNumber = (val: any, fallback = 0) => {
           rating: safeNumber(s.rating, 5.0)
         }, { onConflict: 'id' });
         if (supErr) {
+          if (isNetworkError(supErr)) {
+            setIsSyncingSupabase(false);
+            return { success: false, message: 'Koneksi ke Supabase terputus. Data Anda tersimpan di lokal.' };
+          }
           console.warn('Supabase suppliers upsert notice:', supErr.message || supErr);
-          syncErrors.push(`Suppliers (${s.name}): ${supErr.message || JSON.stringify(supErr)}`);
+          syncErrors.push(`Suppliers (${s.name}): ${supErr.message || 'Error'}`);
         }
       }
 
@@ -375,8 +413,12 @@ const safeNumber = (val: any, fallback = 0) => {
           expected_delivery: po.expectedDelivery ? safeDateOnly(po.expectedDelivery) : null
         }, { onConflict: 'id' });
         if (poErr) {
+          if (isNetworkError(poErr)) {
+            setIsSyncingSupabase(false);
+            return { success: false, message: 'Koneksi ke Supabase terputus. Data Anda tersimpan di lokal.' };
+          }
           console.warn('Supabase purchase_orders upsert notice:', poErr.message || poErr);
-          syncErrors.push(`PurchaseOrders (${po.id}): ${poErr.message || JSON.stringify(poErr)}`);
+          syncErrors.push(`PurchaseOrders (${po.id}): ${poErr.message || 'Error'}`);
         }
       }
 
@@ -392,8 +434,8 @@ const safeNumber = (val: any, fallback = 0) => {
       return { success: true, message: 'Berhasil menyinkronkan seluruh data aplikasi (Users, Products, Orders, Employees, Suppliers, Purchase Orders) ke Supabase!' };
     } catch (err: any) {
       setIsSyncingSupabase(false);
-      console.error('Supabase sync all error:', err);
-      return { success: false, message: err.message || 'Gagal sinkronisasi ke Supabase.' };
+      console.warn('Supabase sync notice:', err);
+      return { success: false, message: 'Server Supabase tidak dapat dijangkau. Data tersimpan di penyimpanan lokal.' };
     }
   };
 
@@ -424,6 +466,16 @@ const safeNumber = (val: any, fallback = 0) => {
           supabase.from('system_audit_logs').select('*'),
           supabase.from('notifications').select('*')
         ]);
+
+        // Check if server is offline or unreachable
+        if (
+          (usersRes.error && isNetworkError(usersRes.error)) ||
+          (prodRes.error && isNetworkError(prodRes.error)) ||
+          (empRes.error && isNetworkError(empRes.error))
+        ) {
+          console.warn('[Supabase] Offline mode: Server Supabase tidak terjangkau. Menggunakan data lokal.');
+          return;
+        }
 
         const rawUserData = (usersRes.data && usersRes.data.length > 0) ? usersRes.data : profilesRes.data;
         if (rawUserData && rawUserData.length > 0) {
@@ -461,11 +513,11 @@ const safeNumber = (val: any, fallback = 0) => {
           }));
           setProducts(loadedProducts);
           setStored('products', loadedProducts);
-        } else {
-          // If Supabase table is empty, auto push initial local data to Supabase
+        } else if (!prodRes.error && Array.isArray(prodRes.data) && prodRes.data.length === 0) {
+          // If Supabase table is empty and reachable, auto push initial local data
           setTimeout(() => {
             syncAllDataToSupabase();
-          }, 1000);
+          }, 1500);
         }
 
         if (ordRes.data && ordRes.data.length > 0) {
@@ -527,11 +579,11 @@ const safeNumber = (val: any, fallback = 0) => {
           }));
           setEmployees(loadedEmps);
           setStored('employees', loadedEmps);
-        } else {
-          // Auto sync initial employees and profiles data to Supabase if empty
+        } else if (!empRes.error && Array.isArray(empRes.data) && empRes.data.length === 0) {
+          // Auto sync initial employees and profiles data to Supabase if empty and reachable
           setTimeout(() => {
             syncAllDataToSupabase();
-          }, 1000);
+          }, 1500);
         }
 
         if (supRes.data && supRes.data.length > 0) {
