@@ -321,3 +321,37 @@ CREATE TABLE IF NOT EXISTS public.notifications (
     read BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- ==============================================================================
+-- DISABLE ROW LEVEL SECURITY (RLS) & GRANT PERMISSIONS FOR ALL TABLES
+-- ==============================================================================
+ALTER TABLE public.users DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.profiles DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.employees DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.attendance_records DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.payroll_records DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.leave_requests DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.products DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.stock_movements DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.suppliers DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.purchase_orders DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.marketplace_orders DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.crm_customers DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.finance_accounts DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.finance_transactions DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.budgets DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.projects DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.project_tasks DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.production_batches DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.quality_checks DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.marketing_campaigns DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.events DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.executive_kpis DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.chat_messages DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.system_audit_logs DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.notifications DISABLE ROW LEVEL SECURITY;
+
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated, service_role;
+

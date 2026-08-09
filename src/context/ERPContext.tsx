@@ -218,35 +218,71 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [isSyncingSupabase, setIsSyncingSupabase] = useState(false);
 
+const safeISOString = (val?: string) => {
+  if (!val) return new Date().toISOString();
+  try {
+    const formatted = val.includes(' ') ? val.replace(' ', 'T') : val;
+    const d = new Date(formatted);
+    return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+  } catch {
+    return new Date().toISOString();
+  }
+};
+
+const safeDateOnly = (val?: string) => {
+  if (!val) return '2020-01-01';
+  try {
+    const clean = val.split('T')[0].split(' ')[0];
+    const d = new Date(clean);
+    return isNaN(d.getTime()) ? '2020-01-01' : clean;
+  } catch {
+    return '2020-01-01';
+  }
+};
+
+const safeNumber = (val: any, fallback = 0) => {
+  if (val === undefined || val === null || val === '') return fallback;
+  const num = Number(val);
+  return isNaN(num) ? fallback : num;
+};
+
   const syncAllDataToSupabase = async () => {
     if (!isSupabaseConfigured) return { success: false, message: 'Supabase belum dikonfigurasi / URL placeholder.' };
     setIsSyncingSupabase(true);
+    const syncErrors: string[] = [];
+
     try {
       // 0. Sync Users & Profiles (User Management)
       for (const u of users) {
+        const userEmail = u.email || `user_${u.id}@company.com`;
         const { error: userErr } = await supabase.from('users').upsert({
           id: u.id,
-          username: u.username || u.email,
+          username: u.username || userEmail,
           name: u.name || 'User',
-          email: u.email || 'user@example.com',
+          email: userEmail,
           role: u.role || 'Admin',
           department: u.department || 'Executive',
           avatar: u.avatar || '',
           status: u.status || 'active',
-          last_login: u.lastLogin || new Date().toISOString(),
-          permissions: u.permissions || []
-        });
-        if (userErr) console.warn('Supabase users upsert warning:', userErr);
+          last_login: safeISOString(u.lastLogin),
+          permissions: Array.isArray(u.permissions) ? u.permissions : []
+        }, { onConflict: 'id' });
+        if (userErr) {
+          console.warn('Supabase users upsert notice:', userErr.message || userErr);
+          syncErrors.push(`Users (${u.name}): ${userErr.message || JSON.stringify(userErr)}`);
+        }
 
         const { error: profErr } = await supabase.from('profiles').upsert({
           id: u.id,
           name: u.name || 'User',
-          email: u.email || 'user@example.com',
+          email: userEmail,
           role: u.role || 'Admin',
           department: u.department || 'Executive',
           avatar: u.avatar || ''
-        });
-        if (profErr) console.warn('Supabase profiles upsert warning:', profErr);
+        }, { onConflict: 'id' });
+        if (profErr) {
+          console.warn('Supabase profiles upsert notice:', profErr.message || profErr);
+        }
       }
 
       // 1. Sync Products
@@ -256,80 +292,104 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           name: p.name,
           sku: p.sku,
           category: p.category,
-          price: p.sellingPrice,
-          cost: p.unitCostPrice,
-          stock: p.stockQuantity,
-          min_stock: p.minimumStock,
+          price: safeNumber(p.sellingPrice),
+          cost: safeNumber(p.unitCostPrice),
+          stock: safeNumber(p.stockQuantity),
+          min_stock: safeNumber(p.minimumStock, 5),
           supplier: 'Default Supplier',
           barcode: p.sku,
           image: p.image || ''
-        });
-        if (prodErr) console.warn('Supabase products upsert warning:', prodErr);
+        }, { onConflict: 'id' });
+        if (prodErr) {
+          console.warn('Supabase products upsert notice:', prodErr.message || prodErr);
+          syncErrors.push(`Products (${p.name}): ${prodErr.message || JSON.stringify(prodErr)}`);
+        }
       }
 
       // 2. Sync Marketplace Orders
       for (const o of marketplaceOrders) {
         const { error: ordErr } = await supabase.from('marketplace_orders').upsert({
           id: o.id,
-          customer_name: o.customerName,
+          customer_name: o.customerName || 'Pelanggan',
           customer_email: 'customer@example.com',
-          channel: o.channel,
-          status: o.status,
-          total_amount: o.grossAmount,
-          items: [],
-          payment_method: o.paymentMethod
-        });
-        if (ordErr) console.warn('Supabase marketplace_orders upsert warning:', ordErr);
+          channel: o.channel || 'POS',
+          status: o.status || 'Completed',
+          total_amount: safeNumber(o.grossAmount || (o as any).totalAmount),
+          items: Array.isArray(o.items) ? o.items : [],
+          payment_method: o.paymentMethod || 'Cash'
+        }, { onConflict: 'id' });
+        if (ordErr) {
+          console.warn('Supabase marketplace_orders upsert notice:', ordErr.message || ordErr);
+          syncErrors.push(`Orders (${o.id}): ${ordErr.message || JSON.stringify(ordErr)}`);
+        }
       }
 
       // 3. Sync Employees
       for (const e of employees) {
+        const empEmail = e.email || `emp_${e.id}@company.com`;
         const { error: empErr } = await supabase.from('employees').upsert({
           id: e.id,
           name: e.name || 'Nama Karyawan',
-          email: e.email || 'karyawan@company.com',
+          email: empEmail,
           role: e.role || e.position || 'Staff',
           department: e.department || 'Executive',
           status: e.status || 'Active',
           phone: e.phone || '-',
-          hire_date: e.hireDate || e.joinDate || '2020-01-01',
-          salary: Number(e.salary ?? e.baseSalary ?? 10000000),
+          hire_date: safeDateOnly(e.hireDate || e.joinDate),
+          salary: safeNumber(e.salary ?? e.baseSalary, 10000000),
           avatar: e.avatar || ''
-        });
-        if (empErr) console.warn('Supabase employees upsert warning:', empErr);
+        }, { onConflict: 'id' });
+        if (empErr) {
+          console.warn('Supabase employees upsert notice:', empErr.message || empErr);
+          syncErrors.push(`Employees (${e.name}): ${empErr.message || JSON.stringify(empErr)}`);
+        }
       }
 
       // 4. Sync Suppliers
       for (const s of suppliers) {
         const { error: supErr } = await supabase.from('suppliers').upsert({
           id: s.id,
-          name: s.name,
-          contact_person: s.contactPerson,
-          email: s.email,
-          phone: s.phone,
-          address: s.address,
-          rating: s.rating
-        });
-        if (supErr) console.warn('Supabase suppliers upsert warning:', supErr);
+          name: s.name || 'Supplier',
+          contact_person: s.contactPerson || '-',
+          email: s.email || `supplier_${s.id}@company.com`,
+          phone: s.phone || '-',
+          address: s.address || '-',
+          rating: safeNumber(s.rating, 5.0)
+        }, { onConflict: 'id' });
+        if (supErr) {
+          console.warn('Supabase suppliers upsert notice:', supErr.message || supErr);
+          syncErrors.push(`Suppliers (${s.name}): ${supErr.message || JSON.stringify(supErr)}`);
+        }
       }
 
       // 5. Sync Purchase Orders
       for (const po of purchaseOrders) {
         const { error: poErr } = await supabase.from('purchase_orders').upsert({
           id: po.id,
-          supplier_id: po.supplierId,
-          supplier_name: po.supplierName,
-          status: po.status,
-          total_amount: po.totalAmount,
-          items: po.items,
-          order_date: po.orderDate,
-          expected_delivery: po.expectedDelivery
-        });
-        if (poErr) console.warn('Supabase purchase_orders upsert warning:', poErr);
+          supplier_id: po.supplierId || null,
+          supplier_name: po.supplierName || 'Supplier',
+          status: po.status || 'Pending',
+          total_amount: safeNumber(po.totalAmount),
+          items: Array.isArray(po.items) ? po.items : [],
+          order_date: safeDateOnly(po.orderDate),
+          expected_delivery: po.expectedDelivery ? safeDateOnly(po.expectedDelivery) : null
+        }, { onConflict: 'id' });
+        if (poErr) {
+          console.warn('Supabase purchase_orders upsert notice:', poErr.message || poErr);
+          syncErrors.push(`PurchaseOrders (${po.id}): ${poErr.message || JSON.stringify(poErr)}`);
+        }
       }
 
       setIsSyncingSupabase(false);
-      return { success: true, message: 'Berhasil menyinkronkan seluruh data aplikasi (Users, Products, Orders, Employees, Suppliers) ke Supabase!' };
+
+      if (syncErrors.length > 0) {
+        return {
+          success: false,
+          message: `Sinkronisasi selesai dengan ${syncErrors.length} kendala: ${syncErrors.slice(0, 2).join('; ')}`
+        };
+      }
+
+      return { success: true, message: 'Berhasil menyinkronkan seluruh data aplikasi (Users, Products, Orders, Employees, Suppliers, Purchase Orders) ke Supabase!' };
     } catch (err: any) {
       setIsSyncingSupabase(false);
       console.error('Supabase sync all error:', err);
@@ -574,27 +634,35 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addAuditLog('CREATE_USER', 'Admin', `Created user account: ${newUser.name}`);
 
     if (isSupabaseConfigured) {
-      Promise.resolve(supabase.from('users').upsert({
-        id: newUser.id,
-        username: newUser.username || newUser.email,
-        name: newUser.name || 'User',
-        email: newUser.email || 'user@example.com',
-        role: newUser.role || 'Admin',
-        department: newUser.department || 'Executive',
-        avatar: newUser.avatar || '',
-        status: newUser.status || 'active',
-        last_login: newUser.lastLogin || new Date().toISOString(),
-        permissions: newUser.permissions || []
-      })).catch(err => console.error('Supabase user create error:', err));
+      (async () => {
+        try {
+          const { error: userErr } = await supabase.from('users').upsert({
+            id: newUser.id,
+            username: newUser.username || newUser.email,
+            name: newUser.name || 'User',
+            email: newUser.email || 'user@example.com',
+            role: newUser.role || 'Admin',
+            department: newUser.department || 'Executive',
+            avatar: newUser.avatar || '',
+            status: newUser.status || 'active',
+            last_login: newUser.lastLogin || new Date().toISOString(),
+            permissions: newUser.permissions || []
+          }, { onConflict: 'id' });
+          if (userErr) console.warn('Supabase user create notice:', userErr.message || userErr);
 
-      Promise.resolve(supabase.from('profiles').upsert({
-        id: newUser.id,
-        name: newUser.name || 'User',
-        email: newUser.email || 'user@example.com',
-        role: newUser.role || 'Admin',
-        department: newUser.department || 'Executive',
-        avatar: newUser.avatar || ''
-      })).catch(err => console.error('Supabase profile create error:', err));
+          const { error: profErr } = await supabase.from('profiles').upsert({
+            id: newUser.id,
+            name: newUser.name || 'User',
+            email: newUser.email || 'user@example.com',
+            role: newUser.role || 'Admin',
+            department: newUser.department || 'Executive',
+            avatar: newUser.avatar || ''
+          }, { onConflict: 'id' });
+          if (profErr) console.warn('Supabase profile create notice:', profErr.message || profErr);
+        } catch (err) {
+          console.warn('Supabase user create exception:', err);
+        }
+      })();
     }
   };
 
@@ -611,27 +679,35 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (isSupabaseConfigured) {
       const targetUser = updated.find(u => u.id === id);
       if (targetUser) {
-        Promise.resolve(supabase.from('users').upsert({
-          id: targetUser.id,
-          username: targetUser.username || targetUser.email,
-          name: targetUser.name,
-          email: targetUser.email,
-          role: targetUser.role || 'Admin',
-          department: targetUser.department || 'Executive',
-          avatar: targetUser.avatar || '',
-          status: targetUser.status || 'active',
-          last_login: targetUser.lastLogin || new Date().toISOString(),
-          permissions: targetUser.permissions || []
-        })).catch(err => console.error('Supabase user update error:', err));
+        (async () => {
+          try {
+            const { error: userErr } = await supabase.from('users').upsert({
+              id: targetUser.id,
+              username: targetUser.username || targetUser.email,
+              name: targetUser.name,
+              email: targetUser.email,
+              role: targetUser.role || 'Admin',
+              department: targetUser.department || 'Executive',
+              avatar: targetUser.avatar || '',
+              status: targetUser.status || 'active',
+              last_login: targetUser.lastLogin || new Date().toISOString(),
+              permissions: targetUser.permissions || []
+            }, { onConflict: 'id' });
+            if (userErr) console.warn('Supabase user update notice:', userErr.message || userErr);
 
-        Promise.resolve(supabase.from('profiles').upsert({
-          id: targetUser.id,
-          name: targetUser.name,
-          email: targetUser.email,
-          role: targetUser.role || 'Admin',
-          department: targetUser.department || 'Executive',
-          avatar: targetUser.avatar || ''
-        })).catch(err => console.error('Supabase profile update error:', err));
+            const { error: profErr } = await supabase.from('profiles').upsert({
+              id: targetUser.id,
+              name: targetUser.name,
+              email: targetUser.email,
+              role: targetUser.role || 'Admin',
+              department: targetUser.department || 'Executive',
+              avatar: targetUser.avatar || ''
+            }, { onConflict: 'id' });
+            if (profErr) console.warn('Supabase profile update notice:', profErr.message || profErr);
+          } catch (err) {
+            console.warn('Supabase user update exception:', err);
+          }
+        })();
       }
     }
   };
@@ -642,8 +718,17 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setStored('users', updated);
 
     if (isSupabaseConfigured) {
-      Promise.resolve(supabase.from('users').delete().eq('id', id)).catch(err => console.error('Supabase user delete error:', err));
-      Promise.resolve(supabase.from('profiles').delete().eq('id', id)).catch(err => console.error('Supabase profile delete error:', err));
+      (async () => {
+        try {
+          const { error: userErr } = await supabase.from('users').delete().eq('id', id);
+          if (userErr) console.warn('Supabase user delete notice:', userErr.message || userErr);
+
+          const { error: profErr } = await supabase.from('profiles').delete().eq('id', id);
+          if (profErr) console.warn('Supabase profile delete notice:', profErr.message || profErr);
+        } catch (err) {
+          console.warn('Supabase user delete exception:', err);
+        }
+      })();
     }
   };
 
@@ -665,18 +750,25 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setStored('employees', updated);
 
     if (isSupabaseConfigured) {
-      Promise.resolve(supabase.from('employees').upsert({
-        id: newEmp.id,
-        name: newEmp.name || 'Nama Karyawan',
-        email: newEmp.email || 'karyawan@company.com',
-        role: newEmp.role || newEmp.position || 'Staff',
-        department: newEmp.department || 'Executive',
-        status: newEmp.status || 'Active',
-        phone: newEmp.phone || '-',
-        hire_date: newEmp.hireDate || newEmp.joinDate || '2020-01-01',
-        salary: Number(newEmp.salary ?? newEmp.baseSalary ?? 10000000),
-        avatar: newEmp.avatar || ''
-      })).catch(err => console.error('Supabase employee add error:', err));
+      (async () => {
+        try {
+          const { error: empErr } = await supabase.from('employees').upsert({
+            id: newEmp.id,
+            name: newEmp.name || 'Nama Karyawan',
+            email: newEmp.email || 'karyawan@company.com',
+            role: newEmp.role || newEmp.position || 'Staff',
+            department: newEmp.department || 'Executive',
+            status: newEmp.status || 'Active',
+            phone: newEmp.phone || '-',
+            hire_date: safeDateOnly(newEmp.hireDate || newEmp.joinDate),
+            salary: safeNumber(newEmp.salary ?? newEmp.baseSalary, 10000000),
+            avatar: newEmp.avatar || ''
+          }, { onConflict: 'id' });
+          if (empErr) console.warn('Supabase employee add notice:', empErr.message || empErr);
+        } catch (err) {
+          console.warn('Supabase employee add exception:', err);
+        }
+      })();
     }
 
     if (credentials?.username) {
@@ -703,18 +795,25 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (isSupabaseConfigured) {
       const targetEmp = updated.find(e => e.id === id);
       if (targetEmp) {
-        Promise.resolve(supabase.from('employees').upsert({
-          id: targetEmp.id,
-          name: targetEmp.name || 'Nama Karyawan',
-          email: targetEmp.email || 'karyawan@company.com',
-          role: targetEmp.role || targetEmp.position || 'Staff',
-          department: targetEmp.department || 'Executive',
-          status: targetEmp.status || 'Active',
-          phone: targetEmp.phone || '-',
-          hire_date: targetEmp.hireDate || targetEmp.joinDate || '2020-01-01',
-          salary: Number(targetEmp.salary ?? targetEmp.baseSalary ?? 10000000),
-          avatar: targetEmp.avatar || ''
-        })).catch(err => console.error('Supabase employee update error:', err));
+        (async () => {
+          try {
+            const { error: empErr } = await supabase.from('employees').upsert({
+              id: targetEmp.id,
+              name: targetEmp.name || 'Nama Karyawan',
+              email: targetEmp.email || 'karyawan@company.com',
+              role: targetEmp.role || targetEmp.position || 'Staff',
+              department: targetEmp.department || 'Executive',
+              status: targetEmp.status || 'Active',
+              phone: targetEmp.phone || '-',
+              hire_date: safeDateOnly(targetEmp.hireDate || targetEmp.joinDate),
+              salary: safeNumber(targetEmp.salary ?? targetEmp.baseSalary, 10000000),
+              avatar: targetEmp.avatar || ''
+            }, { onConflict: 'id' });
+            if (empErr) console.warn('Supabase employee update notice:', empErr.message || empErr);
+          } catch (err) {
+            console.warn('Supabase employee update exception:', err);
+          }
+        })();
       }
     }
   };
@@ -725,7 +824,14 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setStored('employees', updated);
 
     if (isSupabaseConfigured) {
-      Promise.resolve(supabase.from('employees').delete().eq('id', id)).catch(err => console.error('Supabase employee delete error:', err));
+      (async () => {
+        try {
+          const { error: empErr } = await supabase.from('employees').delete().eq('id', id);
+          if (empErr) console.warn('Supabase employee delete notice:', empErr.message || empErr);
+        } catch (err) {
+          console.warn('Supabase employee delete exception:', err);
+        }
+      })();
     }
   };
 
@@ -967,9 +1073,9 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           total_amount: newOrd.grossAmount,
           items: [],
           payment_method: newOrd.paymentMethod
-        });
+        }, { onConflict: 'id' });
       } catch (err) {
-        console.error('Supabase addMarketplaceOrder error:', err);
+        console.warn('Supabase addMarketplaceOrder notice:', err);
       }
     }
   };
@@ -1019,9 +1125,9 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           supplier: 'Default Supplier',
           barcode: newProd.sku,
           image: ''
-        });
+        }, { onConflict: 'id' });
       } catch (err) {
-        console.error('Supabase addProduct error:', err);
+        console.warn('Supabase addProduct notice:', err);
       }
     }
   };
