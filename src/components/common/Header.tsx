@@ -37,7 +37,10 @@ export const Header: React.FC<HeaderProps> = ({
     isOffline,
     syncConflicts,
     openConflictWizard,
-    isAdmin
+    isAdmin,
+    isSupabaseConfigured,
+    isSyncingSupabase,
+    syncAllDataToSupabase
   } = useERP();
 
   if (!currentUser) return null;
@@ -212,6 +215,31 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             )}
           </div>
+
+          {/* Supabase Sync Button */}
+          <button
+            id="supabase-sync-btn"
+            disabled={isSyncingSupabase}
+            onClick={async () => {
+              const res = await syncAllDataToSupabase();
+              alert(res.message);
+            }}
+            className={`flex items-center justify-center w-9 h-9 lg:w-auto lg:px-3.5 lg:py-2 lg:gap-1.5 rounded-xl border transition-all duration-200 active:scale-95 ${
+              isSupabaseConfigured 
+                ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200' 
+                : 'bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200'
+            }`}
+            title={isSupabaseConfigured ? "Supabase Terhubung - Klik untuk Sync Semua Data ke Supabase" : "Supabase Belum Dikonfigurasi"}
+          >
+            {isSyncingSupabase ? (
+              <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4 shrink-0" />
+            )}
+            <span className="hidden lg:inline text-xs font-bold">
+              {isSupabaseConfigured ? 'Sync Supabase' : 'Supabase Off'}
+            </span>
+          </button>
 
           {/* Global Reset Button - Hidden for Staff & Manager roles */}
           {!['staff', 'manager'].includes(currentUser?.role?.toLowerCase() || '') && (

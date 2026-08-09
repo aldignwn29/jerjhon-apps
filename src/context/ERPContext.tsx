@@ -178,6 +178,10 @@ interface ERPContextType {
   isManager: boolean;
   isAdmin: boolean;
 
+  isSupabaseConfigured: boolean;
+  isSyncingSupabase: boolean;
+  syncAllDataToSupabase: () => Promise<{ success: boolean; message: string }>;
+
   formatIDR: (amount: number) => string;
 }
 
@@ -211,6 +215,95 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [currentUser, setCurrentUser] = useState<User | null>(() => getStored('currentUser', null));
 
   const isAuthenticated = !!currentUser;
+
+  const [isSyncingSupabase, setIsSyncingSupabase] = useState(false);
+
+  const syncAllDataToSupabase = async () => {
+    if (!isSupabaseConfigured) return { success: false, message: 'Supabase belum dikonfigurasi / URL placeholder.' };
+    setIsSyncingSupabase(true);
+    try {
+      // 1. Sync Products
+      for (const p of products) {
+        await supabase.from('products').upsert({
+          id: p.id,
+          name: p.name,
+          sku: p.sku,
+          category: p.category,
+          price: p.sellingPrice,
+          cost: p.unitCostPrice,
+          stock: p.stockQuantity,
+          min_stock: p.minimumStock,
+          supplier: 'Default Supplier',
+          barcode: p.sku,
+          image: p.image || ''
+        });
+      }
+
+      // 2. Sync Marketplace Orders
+      for (const o of marketplaceOrders) {
+        await supabase.from('marketplace_orders').upsert({
+          id: o.id,
+          customer_name: o.customerName,
+          customer_email: 'customer@example.com',
+          channel: o.channel,
+          status: o.status,
+          total_amount: o.grossAmount,
+          items: [],
+          payment_method: o.paymentMethod
+        });
+      }
+
+      // 3. Sync Employees
+      for (const e of employees) {
+        await supabase.from('employees').upsert({
+          id: e.id,
+          name: e.name,
+          email: e.email,
+          role: e.role,
+          department: e.department,
+          status: e.status,
+          phone: e.phone,
+          hire_date: e.hireDate,
+          salary: e.salary,
+          avatar: e.avatar || ''
+        });
+      }
+
+      // 4. Sync Suppliers
+      for (const s of suppliers) {
+        await supabase.from('suppliers').upsert({
+          id: s.id,
+          name: s.name,
+          contact_person: s.contactPerson,
+          email: s.email,
+          phone: s.phone,
+          address: s.address,
+          rating: s.rating
+        });
+      }
+
+      // 5. Sync Purchase Orders
+      for (const po of purchaseOrders) {
+        await supabase.from('purchase_orders').upsert({
+          id: po.id,
+          supplier_id: po.supplierId,
+          supplier_name: po.supplierName,
+          status: po.status,
+          total_amount: po.totalAmount,
+          items: po.items,
+          order_date: po.orderDate,
+          expected_delivery: po.expectedDelivery
+        });
+      }
+
+      setIsSyncingSupabase(false);
+      return { success: true, message: 'Berhasil menyinkronkan seluruh data aplikasi ke Supabase!' };
+    } catch (err: any) {
+      setIsSyncingSupabase(false);
+      console.error('Supabase sync all error:', err);
+      return { success: false, message: err.message || 'Gagal sinkronisasi ke Supabase.' };
+    }
+  };
 
   // Supabase live sync effect
   useEffect(() => {
@@ -254,6 +347,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }));
           setProducts(loadedProducts);
           setStored('products', loadedProducts);
+        } else {
+          // If Supabase table is empty, auto push initial local data to Supabase
+          setTimeout(() => {
+            syncAllDataToSupabase();
+          }, 1000);
         }
 
         if (ordRes.data && ordRes.data.length > 0) {
@@ -1049,6 +1147,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       rawMaterialGroups, events, stockOpnameRecords, addStockOpnameRecord,
       sizeOptions, setSizeOptions, colorOptions, setColorOptions,
       isStaff, isManager, isAdmin,
+      isSupabaseConfigured, isSyncingSupabase, syncAllDataToSupabase,
       formatIDR
     }}>
       {children}
