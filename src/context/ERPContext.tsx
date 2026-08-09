@@ -17,7 +17,7 @@ import {
   INITIAL_NOTIFICATIONS, INITIAL_SYSTEM_ROLES, INITIAL_RAW_MATERIAL_GROUPS,
   INITIAL_EVENTS
 } from '../data/initialData';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, checkConnection } from '../lib/supabase';
 
 interface ERPContextType {
   darkMode: boolean;
@@ -181,6 +181,7 @@ interface ERPContextType {
   isSupabaseConfigured: boolean;
   isSyncingSupabase: boolean;
   syncAllDataToSupabase: () => Promise<{ success: boolean; message: string }>;
+  pullSupabaseData: () => Promise<void>;
 
   formatIDR: (amount: number) => string;
 }
@@ -192,27 +193,9 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [activeTab, setActiveTab] = useState<string>('executive-dashboard');
   const [activeDomain, setActiveDomain] = useState<string>('executive');
 
-  // Helper for localStorage with fallback
-  const getStored = <T,>(key: string, fallback: T): T => {
-    try {
-      const item = localStorage.getItem(`jerjhon_${key}`);
-      return item ? JSON.parse(item) : fallback;
-    } catch {
-      return fallback;
-    }
-  };
-
-  const setStored = <T,>(key: string, val: T) => {
-    try {
-      localStorage.setItem(`jerjhon_${key}`, JSON.stringify(val));
-    } catch (err) {
-      console.error(`Failed storing ${key}:`, err);
-    }
-  };
-
   // Auth state
-  const [users, setUsers] = useState<User[]>(() => getStored('users', INITIAL_USERS));
-  const [currentUser, setCurrentUser] = useState<User | null>(() => getStored('currentUser', null));
+  const [users, setUsers] = useState<User[]>(INITIAL_USERS);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
 
   const isAuthenticated = !!currentUser;
 
@@ -249,25 +232,26 @@ const safeNumber = (val: any, fallback = 0) => {
 const isNetworkError = (err: any) => {
   if (!err) return false;
   const msg = typeof err === 'string' ? err : (err.message || JSON.stringify(err));
-  return msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('TypeError') || msg.includes('fetch');
+  return msg.includes('Failed to fetch') || msg.includes('NetworkError');
 };
 
   const syncAllDataToSupabase = async () => {
-    if (!isSupabaseConfigured) return { success: false, message: 'Supabase belum dikonfigurasi / URL placeholder.' };
+    if (!isSupabaseConfigured) return { success: false, message: 'Supabase belum dikonfigurasi.' };
     setIsSyncingSupabase(true);
 
     try {
-      // Test Supabase connection before looping
-      const { error: pingErr } = await supabase.from('users').select('id').limit(1);
-      if (pingErr && isNetworkError(pingErr)) {
-        setIsSyncingSupabase(false);
-        return {
-          success: false,
-          message: 'Server Supabase tidak dapat dijangkau (Failed to fetch). Pastikan koneksi internet atau status proyek Supabase aktif. Data Anda tetap tersimpan aman secara lokal.'
-        };
-      }
-
       const syncErrors: string[] = [];
+
+      const formatError = (err: any, contextStr: string) => {
+        const msg = err?.message || String(err);
+        if (msg.includes('Invalid API key') || msg.includes('JWSError') || msg.includes('JWT') || msg.includes('401')) {
+          return 'INVALID_KEY';
+        }
+        if (msg.includes('does not exist') || msg.includes('relation')) {
+          return `${contextStr}: Tabel belum ada di database`;
+        }
+        return `${contextStr}: ${msg}`;
+      };
 
       // 0. Sync Users & Profiles (User Management)
       for (const u of users) {
@@ -275,6 +259,7 @@ const isNetworkError = (err: any) => {
         const { error: userErr } = await supabase.from('users').upsert({
           id: u.id,
           username: u.username || userEmail,
+          password: u.password || '',
           name: u.name || 'User',
           email: userEmail,
           role: u.role || 'Admin',
@@ -285,12 +270,16 @@ const isNetworkError = (err: any) => {
           permissions: Array.isArray(u.permissions) ? u.permissions : []
         }, { onConflict: 'id' });
         if (userErr) {
-          if (isNetworkError(userErr)) {
-            setIsSyncingSupabase(false);
-            return { success: false, message: 'Koneksi ke Supabase terputus. Data Anda tersimpan di lokal.' };
-          }
           console.warn('Supabase users upsert notice:', userErr.message || userErr);
-          syncErrors.push(`Users (${u.name}): ${userErr.message || 'Error'}`);
+          const formatted = formatError(userErr, `Users (${u.name})`);
+          if (formatted === 'INVALID_KEY') {
+            setIsSyncingSupabase(false);
+            return {
+              success: false,
+              message: 'Gagal sinkronisasi: API Key Supabase tidak valid. Silakan periksa Anon Key pada Pengaturan Supabase.'
+            };
+          }
+          syncErrors.push(formatted);
         }
 
         const { error: profErr } = await supabase.from('profiles').upsert({
@@ -301,9 +290,16 @@ const isNetworkError = (err: any) => {
           department: u.department || 'Executive',
           avatar: u.avatar || ''
         }, { onConflict: 'id' });
-        if (profErr && isNetworkError(profErr)) {
-          setIsSyncingSupabase(false);
-          return { success: false, message: 'Koneksi ke Supabase terputus. Data Anda tersimpan di lokal.' };
+        if (profErr) {
+          console.warn('Supabase profiles upsert notice:', profErr.message || profErr);
+          const formatted = formatError(profErr, `Profiles (${u.name})`);
+          if (formatted === 'INVALID_KEY') {
+            setIsSyncingSupabase(false);
+            return {
+              success: false,
+              message: 'Gagal sinkronisasi: API Key Supabase tidak valid. Silakan periksa Anon Key pada Pengaturan Supabase.'
+            };
+          }
         }
       }
 
@@ -323,12 +319,16 @@ const isNetworkError = (err: any) => {
           image: p.image || ''
         }, { onConflict: 'id' });
         if (prodErr) {
-          if (isNetworkError(prodErr)) {
-            setIsSyncingSupabase(false);
-            return { success: false, message: 'Koneksi ke Supabase terputus. Data Anda tersimpan di lokal.' };
-          }
           console.warn('Supabase products upsert notice:', prodErr.message || prodErr);
-          syncErrors.push(`Products (${p.name}): ${prodErr.message || 'Error'}`);
+          const formatted = formatError(prodErr, `Products (${p.name})`);
+          if (formatted === 'INVALID_KEY') {
+            setIsSyncingSupabase(false);
+            return {
+              success: false,
+              message: 'Gagal sinkronisasi: API Key Supabase tidak valid. Silakan periksa Anon Key pada Pengaturan Supabase.'
+            };
+          }
+          syncErrors.push(formatted);
         }
       }
 
@@ -345,12 +345,16 @@ const isNetworkError = (err: any) => {
           payment_method: o.paymentMethod || 'Cash'
         }, { onConflict: 'id' });
         if (ordErr) {
-          if (isNetworkError(ordErr)) {
-            setIsSyncingSupabase(false);
-            return { success: false, message: 'Koneksi ke Supabase terputus. Data Anda tersimpan di lokal.' };
-          }
           console.warn('Supabase marketplace_orders upsert notice:', ordErr.message || ordErr);
-          syncErrors.push(`Orders (${o.id}): ${ordErr.message || 'Error'}`);
+          const formatted = formatError(ordErr, `Orders (${o.id})`);
+          if (formatted === 'INVALID_KEY') {
+            setIsSyncingSupabase(false);
+            return {
+              success: false,
+              message: 'Gagal sinkronisasi: API Key Supabase tidak valid. Silakan periksa Anon Key pada Pengaturan Supabase.'
+            };
+          }
+          syncErrors.push(formatted);
         }
       }
 
@@ -370,12 +374,16 @@ const isNetworkError = (err: any) => {
           avatar: e.avatar || ''
         }, { onConflict: 'id' });
         if (empErr) {
-          if (isNetworkError(empErr)) {
-            setIsSyncingSupabase(false);
-            return { success: false, message: 'Koneksi ke Supabase terputus. Data Anda tersimpan di lokal.' };
-          }
           console.warn('Supabase employees upsert notice:', empErr.message || empErr);
-          syncErrors.push(`Employees (${e.name}): ${empErr.message || 'Error'}`);
+          const formatted = formatError(empErr, `Employees (${e.name})`);
+          if (formatted === 'INVALID_KEY') {
+            setIsSyncingSupabase(false);
+            return {
+              success: false,
+              message: 'Gagal sinkronisasi: API Key Supabase tidak valid. Silakan periksa Anon Key pada Pengaturan Supabase.'
+            };
+          }
+          syncErrors.push(formatted);
         }
       }
 
@@ -391,12 +399,16 @@ const isNetworkError = (err: any) => {
           rating: safeNumber(s.rating, 5.0)
         }, { onConflict: 'id' });
         if (supErr) {
-          if (isNetworkError(supErr)) {
-            setIsSyncingSupabase(false);
-            return { success: false, message: 'Koneksi ke Supabase terputus. Data Anda tersimpan di lokal.' };
-          }
           console.warn('Supabase suppliers upsert notice:', supErr.message || supErr);
-          syncErrors.push(`Suppliers (${s.name}): ${supErr.message || 'Error'}`);
+          const formatted = formatError(supErr, `Suppliers (${s.name})`);
+          if (formatted === 'INVALID_KEY') {
+            setIsSyncingSupabase(false);
+            return {
+              success: false,
+              message: 'Gagal sinkronisasi: API Key Supabase tidak valid. Silakan periksa Anon Key pada Pengaturan Supabase.'
+            };
+          }
+          syncErrors.push(formatted);
         }
       }
 
@@ -413,213 +425,199 @@ const isNetworkError = (err: any) => {
           expected_delivery: po.expectedDelivery ? safeDateOnly(po.expectedDelivery) : null
         }, { onConflict: 'id' });
         if (poErr) {
-          if (isNetworkError(poErr)) {
-            setIsSyncingSupabase(false);
-            return { success: false, message: 'Koneksi ke Supabase terputus. Data Anda tersimpan di lokal.' };
-          }
           console.warn('Supabase purchase_orders upsert notice:', poErr.message || poErr);
-          syncErrors.push(`PurchaseOrders (${po.id}): ${poErr.message || 'Error'}`);
+          const formatted = formatError(poErr, `PurchaseOrders (${po.id})`);
+          if (formatted === 'INVALID_KEY') {
+            setIsSyncingSupabase(false);
+            return {
+              success: false,
+              message: 'Gagal sinkronisasi: API Key Supabase tidak valid. Silakan periksa Anon Key pada Pengaturan Supabase.'
+            };
+          }
+          syncErrors.push(formatted);
         }
       }
+
+      // Automatically pull latest data back from Supabase to sync 2-way
+      await pullSupabaseData();
 
       setIsSyncingSupabase(false);
 
       if (syncErrors.length > 0) {
+        const uniqueErrors = Array.from(new Set(syncErrors));
         return {
           success: false,
-          message: `Sinkronisasi selesai dengan ${syncErrors.length} kendala: ${syncErrors.slice(0, 2).join('; ')}`
+          message: `Sinkronisasi selesai dengan catatan: ${uniqueErrors.slice(0, 2).join('; ')}`
         };
       }
 
-      return { success: true, message: 'Berhasil menyinkronkan seluruh data aplikasi (Users, Products, Orders, Employees, Suppliers, Purchase Orders) ke Supabase!' };
+      return { success: true, message: 'Berhasil menyinkronkan seluruh data aplikasi dengan Supabase!' };
     } catch (err: any) {
       setIsSyncingSupabase(false);
-      console.warn('Supabase sync notice:', err);
-      return { success: false, message: 'Server Supabase tidak dapat dijangkau. Data tersimpan di penyimpanan lokal.' };
+      console.error('Supabase sync error:', err);
+      return { success: false, message: `Gagal sinkronisasi Supabase: ${err.message || 'Connection error'}` };
     }
   };
 
-  // Supabase live sync effect
+  const pullSupabaseData = async () => {
+    if (!isSupabaseConfigured) return;
+
+    try {
+      const [
+        usersRes,
+        profilesRes,
+        prodRes,
+        ordRes,
+        empRes,
+        supRes,
+        poRes
+      ] = await Promise.all([
+        supabase.from('users').select('*'),
+        supabase.from('profiles').select('*'),
+        supabase.from('products').select('*'),
+        supabase.from('marketplace_orders').select('*'),
+        supabase.from('employees').select('*'),
+        supabase.from('suppliers').select('*'),
+        supabase.from('purchase_orders').select('*')
+      ]);
+
+      const rawUserData = (usersRes.data && usersRes.data.length > 0) ? usersRes.data : (profilesRes.data || []);
+      if (rawUserData && rawUserData.length > 0) {
+        const loadedUsers = rawUserData.map((u: any) => ({
+          id: u.id,
+          username: u.username || u.email || 'user',
+          password: u.password || '',
+          name: u.name || 'User',
+          email: u.email || 'user@example.com',
+          role: u.role || 'Admin',
+          department: u.department || 'Executive',
+          avatar: u.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+          status: u.status || 'active',
+          lastLogin: u.last_login || new Date().toISOString(),
+          permissions: Array.isArray(u.permissions) ? u.permissions : []
+        }));
+        setUsers(loadedUsers);
+      }
+
+      if (prodRes.data && prodRes.data.length > 0) {
+        const loadedProducts = prodRes.data.map((p: any) => ({
+          id: p.id,
+          sku: p.sku || p.id,
+          name: p.name || 'Produk',
+          category: p.category || 'Umum',
+          warehouse: p.warehouse || 'Gudang Pusat',
+          stockQuantity: Number(p.stock) || 0,
+          minimumStock: Number(p.min_stock) || 5,
+          safetyStock: 5,
+          unitCostPrice: Number(p.cost) || 0,
+          sellingPrice: Number(p.price) || 0,
+          unit: 'Pcs',
+          status: 'Ready',
+          lastUpdated: p.created_at || new Date().toISOString()
+        }));
+        setProducts(loadedProducts);
+      }
+
+      if (ordRes.data && ordRes.data.length > 0) {
+        const loadedOrders = ordRes.data.map((o: any) => ({
+          id: o.id,
+          orderNumber: o.id,
+          channel: o.channel || 'POS Retail',
+          customerName: o.customer_name || 'Pelanggan',
+          customerPhone: o.customer_phone || '-',
+          orderDate: o.created_at || new Date().toISOString(),
+          skuCode: 'SKU-001',
+          productName: 'Custom Item',
+          quantity: 1,
+          unitPrice: Number(o.total_amount) || 0,
+          grossAmount: Number(o.total_amount) || 0,
+          voucherDiscount: 0,
+          marketplaceAdminFee: 0,
+          adsCost: 0,
+          shippingFee: 0,
+          cogs: 0,
+          variant: '-',
+          netProfit: (Number(o.total_amount) || 0) * 0.35,
+          status: o.status || 'Selesai',
+          paymentMethod: o.payment_method || 'Cash / QRIS',
+          items: Array.isArray(o.items) ? o.items : []
+        }));
+        setMarketplaceOrders(loadedOrders);
+      }
+
+      if (empRes.data && empRes.data.length > 0) {
+        const loadedEmps = empRes.data.map((e: any) => ({
+          id: e.id,
+          nik: '3171011212900001',
+          name: e.name || 'Karyawan',
+          email: e.email || 'karyawan@company.com',
+          phone: e.phone || '-',
+          gender: 'L',
+          avatar: e.avatar || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80',
+          department: e.department || 'Executive',
+          position: e.role || 'Staff',
+          supervisor: 'CEO',
+          joinDate: e.hire_date || '2020-01-01',
+          status: e.status || 'Tetap',
+          npwp: '-',
+          bpjsKesehatan: '-',
+          bpjsKetenagakerjaan: '-',
+          bankName: 'BCA',
+          bankAccountNumber: '1234567890',
+          baseSalary: Number(e.salary) || 10000000,
+          fixedAllowance: 0,
+          transportAllowance: 0,
+          mealAllowance: 0,
+          address: 'Bandung',
+          kpiScore: 100,
+          education: 'S1',
+          role: e.role || 'Staff',
+          salary: Number(e.salary) || 10000000,
+          hireDate: e.hire_date || '2020-01-01'
+        }));
+        setEmployees(loadedEmps);
+      }
+
+      if (supRes.data && supRes.data.length > 0) {
+        const loadedSups = supRes.data.map((s: any) => ({
+          id: s.id,
+          name: s.name || 'Supplier',
+          contactPerson: s.contact_person || '-',
+          email: s.email || '-',
+          phone: s.phone || '-',
+          address: s.address || '-',
+          rating: Number(s.rating) || 5.0
+        }));
+        setSuppliers(loadedSups);
+      }
+
+      if (poRes.data && poRes.data.length > 0) {
+        const loadedPOs = poRes.data.map((p: any) => ({
+          id: p.id,
+          supplierId: p.supplier_id || 'SUP-001',
+          supplierName: p.supplier_name || 'Supplier',
+          status: p.status || 'Pending',
+          totalAmount: Number(p.total_amount) || 0,
+          items: Array.isArray(p.items) ? p.items : [],
+          orderDate: p.order_date || new Date().toISOString().split('T')[0],
+          expectedDelivery: p.expected_delivery || null
+        }));
+        setPurchaseOrders(loadedPOs);
+      }
+    } catch (err) {
+      console.warn('Supabase sync connection error:', err);
+    }
+  };
+
+  // Supabase live sync effect and connection diagnostic
   useEffect(() => {
     if (!isSupabaseConfigured) return;
 
-    async function fetchSupabaseData() {
-      try {
-        const [
-          usersRes,
-          profilesRes,
-          prodRes,
-          ordRes,
-          empRes,
-          supRes,
-          poRes,
-          auditRes,
-          notifRes
-        ] = await Promise.all([
-          supabase.from('users').select('*'),
-          supabase.from('profiles').select('*'),
-          supabase.from('products').select('*'),
-          supabase.from('marketplace_orders').select('*'),
-          supabase.from('employees').select('*'),
-          supabase.from('suppliers').select('*'),
-          supabase.from('purchase_orders').select('*'),
-          supabase.from('system_audit_logs').select('*'),
-          supabase.from('notifications').select('*')
-        ]);
+    checkConnection().then((status) => {
+      console.log('[ERPContext] Supabase checkConnection status:', status);
+    });
 
-        // Check if server is offline or unreachable
-        if (
-          (usersRes.error && isNetworkError(usersRes.error)) ||
-          (prodRes.error && isNetworkError(prodRes.error)) ||
-          (empRes.error && isNetworkError(empRes.error))
-        ) {
-          console.warn('[Supabase] Offline mode: Server Supabase tidak terjangkau. Menggunakan data lokal.');
-          return;
-        }
-
-        const rawUserData = (usersRes.data && usersRes.data.length > 0) ? usersRes.data : profilesRes.data;
-        if (rawUserData && rawUserData.length > 0) {
-          const loadedUsers = rawUserData.map((u: any) => ({
-            id: u.id,
-            username: u.username || u.email || 'user',
-            name: u.name || 'User',
-            email: u.email || 'user@example.com',
-            role: u.role || 'Admin',
-            department: u.department || 'Executive',
-            avatar: u.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-            status: u.status || 'active',
-            lastLogin: u.last_login || new Date().toISOString(),
-            permissions: u.permissions || []
-          }));
-          setUsers(loadedUsers);
-          setStored('users', loadedUsers);
-        }
-
-        if (prodRes.data && prodRes.data.length > 0) {
-          const loadedProducts = prodRes.data.map((p: any) => ({
-            id: p.id,
-            sku: p.sku,
-            name: p.name,
-            category: p.category,
-            warehouse: p.warehouse || 'Gudang Pusat',
-            stockQuantity: p.stock || 10,
-            minimumStock: p.min_stock || 5,
-            safetyStock: 5,
-            unitCostPrice: Number(p.cost) || 0,
-            sellingPrice: Number(p.price) || 0,
-            unit: 'Pcs',
-            status: 'Ready',
-            lastUpdated: new Date().toISOString()
-          }));
-          setProducts(loadedProducts);
-          setStored('products', loadedProducts);
-        } else if (!prodRes.error && Array.isArray(prodRes.data) && prodRes.data.length === 0) {
-          // If Supabase table is empty and reachable, auto push initial local data
-          setTimeout(() => {
-            syncAllDataToSupabase();
-          }, 1500);
-        }
-
-        if (ordRes.data && ordRes.data.length > 0) {
-          const loadedOrders = ordRes.data.map((o: any) => ({
-            id: o.id,
-            orderNumber: o.id,
-            channel: o.channel || 'POS Retail',
-            customerName: o.customer_name,
-            customerPhone: o.customer_phone || '-',
-            orderDate: o.created_at || new Date().toISOString(),
-            skuCode: 'SKU-001',
-            productName: 'Custom Item',
-            quantity: 1,
-            unitPrice: Number(o.total_amount),
-            grossAmount: Number(o.total_amount),
-            voucherDiscount: 0,
-            marketplaceAdminFee: 0,
-            adsCost: 0,
-            shippingFee: 0,
-            cogs: 0,
-            variant: '-',
-            netProfit: Number(o.total_amount) * 0.35,
-            status: 'Selesai',
-            paymentMethod: o.payment_method || 'Cash / QRIS'
-          }));
-          setMarketplaceOrders(loadedOrders);
-          setStored('marketplaceOrders', loadedOrders);
-        }
-
-        if (empRes.data && empRes.data.length > 0) {
-          const loadedEmps = empRes.data.map((e: any) => ({
-            id: e.id,
-            nik: '3171011212900001',
-            name: e.name,
-            email: e.email,
-            phone: e.phone || '-',
-            gender: 'L',
-            avatar: e.avatar || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80',
-            department: e.department || 'Executive',
-            position: e.role || 'System Administrator',
-            supervisor: 'CEO',
-            joinDate: e.hire_date || '2020-01-01',
-            status: e.status || 'Tetap',
-            npwp: '-',
-            bpjsKesehatan: '-',
-            bpjsKetenagakerjaan: '-',
-            bankName: 'BCA',
-            bankAccountNumber: '1234567890',
-            baseSalary: Number(e.salary) || 25000000,
-            fixedAllowance: 0,
-            transportAllowance: 0,
-            mealAllowance: 0,
-            address: 'Bandung',
-            kpiScore: 100,
-            education: 'S1',
-            role: e.role,
-            salary: Number(e.salary),
-            hireDate: e.hire_date
-          }));
-          setEmployees(loadedEmps);
-          setStored('employees', loadedEmps);
-        } else if (!empRes.error && Array.isArray(empRes.data) && empRes.data.length === 0) {
-          // Auto sync initial employees and profiles data to Supabase if empty and reachable
-          setTimeout(() => {
-            syncAllDataToSupabase();
-          }, 1500);
-        }
-
-        if (supRes.data && supRes.data.length > 0) {
-          const loadedSups = supRes.data.map((s: any) => ({
-            id: s.id,
-            name: s.name,
-            contactPerson: s.contact_person,
-            email: s.email,
-            phone: s.phone,
-            address: s.address,
-            rating: Number(s.rating)
-          }));
-          setSuppliers(loadedSups);
-          setStored('suppliers', loadedSups);
-        }
-
-        if (poRes.data && poRes.data.length > 0) {
-          const loadedPOs = poRes.data.map((p: any) => ({
-            id: p.id,
-            supplierId: p.supplier_id,
-            supplierName: p.supplier_name,
-            status: p.status,
-            totalAmount: Number(p.total_amount),
-            items: p.items || [],
-            orderDate: p.order_date,
-            expectedDelivery: p.expected_delivery
-          }));
-          setPurchaseOrders(loadedPOs);
-          setStored('purchaseOrders', loadedPOs);
-        }
-      } catch (err) {
-        console.error('Supabase sync warning:', err);
-      }
-    }
-
-    fetchSupabaseData();
+    pullSupabaseData();
   }, []);
 
   // Simple sha256 hash helper
@@ -650,14 +648,12 @@ const isNetworkError = (err: any) => {
     }
 
     setCurrentUser(found);
-    setStored('currentUser', found);
     addAuditLog('USER_LOGIN', 'Auth', `User ${found.name} logged in successfully.`);
     return { success: true, message: 'Login berhasil!' };
   };
 
   const loginDirect = (user: User) => {
     setCurrentUser(user);
-    setStored('currentUser', user);
     addAuditLog('USER_LOGIN', 'Auth', `User ${user.name} switched/logged in directly.`);
     return { success: true, message: 'Login berhasil!', user };
   };
@@ -675,14 +671,12 @@ const isNetworkError = (err: any) => {
       addAuditLog('USER_LOGOUT', 'Auth', `User ${currentUser.name} logged out.`);
     }
     setCurrentUser(null);
-    localStorage.removeItem('jerjhon_currentUser');
   };
 
   const addUser = (userData: Omit<User, 'id'>) => {
     const newUser: User = { id: `USR-${Date.now()}`, ...userData };
     const updated = [...users, newUser];
     setUsers(updated);
-    setStored('users', updated);
     addAuditLog('CREATE_USER', 'Admin', `Created user account: ${newUser.name}`);
 
     if (isSupabaseConfigured) {
@@ -721,11 +715,9 @@ const isNetworkError = (err: any) => {
   const updateUser = (id: string, userData: Partial<User>) => {
     const updated = users.map(u => u.id === id ? { ...u, ...userData } : u);
     setUsers(updated);
-    setStored('users', updated);
     if (currentUser?.id === id) {
       const updatedCurrent = { ...currentUser, ...userData };
       setCurrentUser(updatedCurrent);
-      setStored('currentUser', updatedCurrent);
     }
 
     if (isSupabaseConfigured) {
@@ -767,7 +759,6 @@ const isNetworkError = (err: any) => {
   const deleteUser = (id: string) => {
     const updated = users.filter(u => u.id !== id);
     setUsers(updated);
-    setStored('users', updated);
 
     if (isSupabaseConfigured) {
       (async () => {
@@ -785,21 +776,19 @@ const isNetworkError = (err: any) => {
   };
 
   // Company Profile
-  const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(() => getStored('companyProfile', INITIAL_COMPANY));
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(INITIAL_COMPANY);
   const updateCompanyProfile = (profile: CompanyProfile) => {
     setCompanyProfile(profile);
-    setStored('companyProfile', profile);
     addAuditLog('UPDATE_COMPANY_PROFILE', 'Admin', 'Updated company legal and tax profile');
   };
 
   // Employees
-  const [employees, setEmployees] = useState<Employee[]>(() => getStored('employees', INITIAL_EMPLOYEES));
+  const [employees, setEmployees] = useState<Employee[]>(INITIAL_EMPLOYEES);
   const addEmployee = (empData: Omit<Employee, 'id'>, credentials?: { username?: string; password?: string; role?: RoleType }) => {
     const newId = `EMP-${Date.now().toString().slice(-4)}`;
     const newEmp: Employee = { id: newId, ...empData };
     const updated = [...employees, newEmp];
     setEmployees(updated);
-    setStored('employees', updated);
 
     if (isSupabaseConfigured) {
       (async () => {
@@ -842,7 +831,6 @@ const isNetworkError = (err: any) => {
   const updateEmployee = (id: string, empData: Partial<Employee>) => {
     const updated = employees.map(e => e.id === id ? { ...e, ...empData } : e);
     setEmployees(updated);
-    setStored('employees', updated);
 
     if (isSupabaseConfigured) {
       const targetEmp = updated.find(e => e.id === id);
@@ -873,7 +861,6 @@ const isNetworkError = (err: any) => {
   const deleteEmployee = (id: string) => {
     const updated = employees.filter(e => e.id !== id);
     setEmployees(updated);
-    setStored('employees', updated);
 
     if (isSupabaseConfigured) {
       (async () => {
@@ -888,7 +875,7 @@ const isNetworkError = (err: any) => {
   };
 
   // Attendance
-  const [attendance, setAttendance] = useState<AttendanceRecord[]>(() => getStored('attendance', INITIAL_ATTENDANCE));
+  const [attendance, setAttendance] = useState<AttendanceRecord[]>(INITIAL_ATTENDANCE);
   const [isSyncingAttendance, setIsSyncingAttendance] = useState(false);
   const [lastAttendanceSyncTime, setLastAttendanceSyncTime] = useState<Date | null>(new Date());
 
@@ -896,19 +883,16 @@ const isNetworkError = (err: any) => {
     const newRec: AttendanceRecord = { id: `ATT-${Date.now()}`, ...rec };
     const updated = [newRec, ...attendance];
     setAttendance(updated);
-    setStored('attendance', updated);
   };
 
   const updateAttendanceRecord = (id: string, rec: Partial<AttendanceRecord>) => {
     const updated = attendance.map(a => a.id === id ? { ...a, ...rec } : a);
     setAttendance(updated);
-    setStored('attendance', updated);
   };
 
   const deleteAttendanceRecord = (id: string) => {
     const updated = attendance.filter(a => a.id !== id);
     setAttendance(updated);
-    setStored('attendance', updated);
   };
 
   const syncAttendanceNow = async () => {
@@ -920,7 +904,7 @@ const isNetworkError = (err: any) => {
   };
 
   // Leave & Overtime
-  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(() => getStored('leaveRequests', INITIAL_LEAVE_REQUESTS));
+  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(INITIAL_LEAVE_REQUESTS);
   const addLeaveRequest = (req: Omit<LeaveRequest, 'id' | 'status' | 'appliedDate'>) => {
     const newReq: LeaveRequest = {
       id: `LEAVE-${Date.now()}`,
@@ -930,30 +914,26 @@ const isNetworkError = (err: any) => {
     };
     const updated = [newReq, ...leaveRequests];
     setLeaveRequests(updated);
-    setStored('leaveRequests', updated);
     addAuditLog('CREATE_LEAVE_REQUEST', 'HRD', `Created leave request for ${req.employeeName}`);
   };
 
   const updateLeaveRequest = (id: string, req: Partial<LeaveRequest>) => {
     const updated = leaveRequests.map(l => l.id === id ? { ...l, ...req } : l);
     setLeaveRequests(updated);
-    setStored('leaveRequests', updated);
   };
 
   const deleteLeaveRequest = (id: string) => {
     const updated = leaveRequests.filter(l => l.id !== id);
     setLeaveRequests(updated);
-    setStored('leaveRequests', updated);
   };
 
   const updateLeaveStatus = (id: string, status: 'Approved' | 'Rejected', approverName: string, stage?: number, comment?: string) => {
     const updated = leaveRequests.map(l => l.id === id ? { ...l, status, approver: approverName } : l);
     setLeaveRequests(updated);
-    setStored('leaveRequests', updated);
     addAuditLog('UPDATE_LEAVE', 'HRD', `Updated leave request ${id} to ${status}`);
   };
 
-  const [overtimeRequests, setOvertimeRequests] = useState<OvertimeRequest[]>(() => getStored('overtimeRequests', INITIAL_OVERTIME_REQUESTS));
+  const [overtimeRequests, setOvertimeRequests] = useState<OvertimeRequest[]>(INITIAL_OVERTIME_REQUESTS);
   const addOvertimeRequest = (req: Omit<OvertimeRequest, 'id' | 'status' | 'appliedDate' | 'mealAllowance' | 'overtimePay' | 'totalPayout' | 'compensationType'>) => {
     const hours = req.hours || 2;
     const pay = hours * 35000;
@@ -970,23 +950,20 @@ const isNetworkError = (err: any) => {
     };
     const updated = [newReq, ...overtimeRequests];
     setOvertimeRequests(updated);
-    setStored('overtimeRequests', updated);
   };
 
   const updateOvertimeStatus = (id: string, status: 'Approved' | 'Rejected', approverName: string) => {
     const updated = overtimeRequests.map(o => o.id === id ? { ...o, status } : o);
     setOvertimeRequests(updated);
-    setStored('overtimeRequests', updated);
   };
 
   const deleteOvertimeRequest = (id: string) => {
     const updated = overtimeRequests.filter(o => o.id !== id);
     setOvertimeRequests(updated);
-    setStored('overtimeRequests', updated);
   };
 
   // Payroll
-  const [payrolls, setPayrolls] = useState<PayrollRecord[]>(() => getStored('payrolls', INITIAL_PAYROLL));
+  const [payrolls, setPayrolls] = useState<PayrollRecord[]>(INITIAL_PAYROLL);
   const calculatePayrollForEmployee = (employeeId: string, period: string) => {
     const emp = employees.find(e => e.id === employeeId);
     if (!emp) return;
@@ -1025,36 +1002,31 @@ const isNetworkError = (err: any) => {
 
     const updated = [newPay, ...payrolls];
     setPayrolls(updated);
-    setStored('payrolls', updated);
   };
 
   const updatePayrollStatus = (payrollId: string, status: any) => {
     const updated = payrolls.map(p => p.id === payrollId ? { ...p, paymentStatus: status } : p);
     setPayrolls(updated);
-    setStored('payrolls', updated);
   };
 
   const addPayrollRecord = (record: Omit<PayrollRecord, 'id'>) => {
     const newRec: PayrollRecord = { id: `PAY-${Date.now()}`, ...record };
     const updated = [newRec, ...payrolls];
     setPayrolls(updated);
-    setStored('payrolls', updated);
   };
 
   const updatePayrollRecord = (id: string, record: Partial<PayrollRecord>) => {
     const updated = payrolls.map(p => p.id === id ? { ...p, ...record } : p);
     setPayrolls(updated);
-    setStored('payrolls', updated);
   };
 
   const deletePayrollRecord = (id: string) => {
     const updated = payrolls.filter(p => p.id !== id);
     setPayrolls(updated);
-    setStored('payrolls', updated);
   };
 
   // KPIs & OKRs
-  const [kpis, setKpis] = useState<KPIRecord[]>(() => getStored('kpis', INITIAL_KPIS));
+  const [kpis, setKpis] = useState<KPIRecord[]>(INITIAL_KPIS);
   const addKPI = (kpi: Omit<KPIRecord, 'id' | 'code' | 'score'>) => {
     const newKpi: KPIRecord = {
       id: `KPI-${Date.now()}`,
@@ -1064,45 +1036,39 @@ const isNetworkError = (err: any) => {
     };
     const updated = [...kpis, newKpi];
     setKpis(updated);
-    setStored('kpis', updated);
   };
 
   const updateKPIScore = (id: string, currentValue: number) => {
     const updated = kpis.map(k => k.id === id ? { ...k, currentValue } : k);
     setKpis(updated);
-    setStored('kpis', updated);
   };
 
-  const [kpiTasks, setKpiTasks] = useState<KPITask[]>(() => getStored('kpiTasks', INITIAL_KPI_TASKS));
+  const [kpiTasks, setKpiTasks] = useState<KPITask[]>(INITIAL_KPI_TASKS);
   const addKPITask = (task: Omit<KPITask, 'id' | 'status'>) => {
     const newTask: KPITask = { id: `TSK-${Date.now()}`, ...task, status: 'Pending' };
     const updated = [newTask, ...kpiTasks];
     setKpiTasks(updated);
-    setStored('kpiTasks', updated);
   };
 
   const submitKPITask = (taskId: string, submission: KPITaskSubmission) => {
     const updated = kpiTasks.map(t => t.id === taskId ? { ...t, status: 'Submitted' as any, submission } : t);
     setKpiTasks(updated);
-    setStored('kpiTasks', updated);
   };
 
   const reviewKPITask = (taskId: string, score: number, scorePreset: any, scoreLabel: string, reviewNotes: string, status: any, reviewerName: string) => {
     const updated = kpiTasks.map(t => t.id === taskId ? { ...t, status, score, reviewNotes } : t);
     setKpiTasks(updated);
-    setStored('kpiTasks', updated);
   };
 
   const deleteKPITask = (taskId: string) => {
     const updated = kpiTasks.filter(t => t.id !== taskId);
     setKpiTasks(updated);
-    setStored('kpiTasks', updated);
   };
 
-  const [okrs] = useState<OKRRecord[]>(() => getStored('okrs', INITIAL_OKRS));
+  const [okrs] = useState<OKRRecord[]>(INITIAL_OKRS);
 
   // Marketplace & Sales
-  const [marketplaceOrders, setMarketplaceOrders] = useState<MarketplaceOrder[]>(() => getStored('marketplaceOrders', INITIAL_MARKETPLACE_ORDERS));
+  const [marketplaceOrders, setMarketplaceOrders] = useState<MarketplaceOrder[]>(INITIAL_MARKETPLACE_ORDERS);
   const addMarketplaceOrder = async (order: Omit<MarketplaceOrder, 'id' | 'netProfit'>) => {
     const netProfit = (order.grossAmount || 0) * 0.35;
     const newOrd: MarketplaceOrder = {
@@ -1112,7 +1078,6 @@ const isNetworkError = (err: any) => {
     };
     const updated = [newOrd, ...marketplaceOrders];
     setMarketplaceOrders(updated);
-    setStored('marketplaceOrders', updated);
 
     if (isSupabaseConfigured) {
       try {
@@ -1135,24 +1100,21 @@ const isNetworkError = (err: any) => {
   const updateMarketplaceOrder = (id: string, orderData: Partial<MarketplaceOrder>) => {
     const updated = marketplaceOrders.map(o => o.id === id ? { ...o, ...orderData } : o);
     setMarketplaceOrders(updated);
-    setStored('marketplaceOrders', updated);
   };
 
   const deleteMarketplaceOrder = (id: string) => {
     const updated = marketplaceOrders.filter(o => o.id !== id);
     setMarketplaceOrders(updated);
-    setStored('marketplaceOrders', updated);
   };
 
   const clearMarketplaceOrders = () => {
     setMarketplaceOrders([]);
-    localStorage.removeItem('jerjhon_marketplaceOrders');
   };
 
-  const [customers] = useState<Customer[]>(() => getStored('customers', INITIAL_CUSTOMERS));
+  const [customers] = useState<Customer[]>(INITIAL_CUSTOMERS);
 
   // Inventory & Products
-  const [products, setProducts] = useState<ProductItem[]>(() => getStored('products', INITIAL_PRODUCTS));
+  const [products, setProducts] = useState<ProductItem[]>(INITIAL_PRODUCTS);
   const addProduct = async (prodData: Omit<ProductItem, 'id'> & { id?: string }) => {
     const newProd: ProductItem = {
       id: prodData.id || `PRD-${Date.now()}`,
@@ -1160,7 +1122,6 @@ const isNetworkError = (err: any) => {
     };
     const updated = [newProd, ...products];
     setProducts(updated);
-    setStored('products', updated);
     addAuditLog('CREATE_PRODUCT', 'Inventory', `Added product ${newProd.name} (${newProd.sku})`);
 
     if (isSupabaseConfigured) {
@@ -1187,30 +1148,26 @@ const isNetworkError = (err: any) => {
   const deleteProduct = (id: string) => {
     const updated = products.filter(p => p.id !== id);
     setProducts(updated);
-    setStored('products', updated);
   };
 
   const updateProduct = (id: string, updatedFields: Partial<ProductItem>) => {
     const updated = products.map(p => p.id === id ? { ...p, ...updatedFields } : p);
     setProducts(updated);
-    setStored('products', updated);
   };
 
   const updateProductStock = (id: string, deltaQty: number, movementType: string) => {
     const updated = products.map(p => p.id === id ? { ...p, stock: Math.max(0, (p.stock || 0) + deltaQty) } : p);
     setProducts(updated);
-    setStored('products', updated);
   };
 
   const clearProducts = () => {
     setProducts([]);
-    localStorage.removeItem('jerjhon_products');
   };
 
-  const [customCategories, setCustomCategories] = useState<string[]>(() => getStored('customCategories', ['Tekstil', 'Jersey Custom', 'Accessories', 'Merchandise']));
-  const [customWarehouses, setCustomWarehouses] = useState<string[]>(() => getStored('customWarehouses', ['Gudang Pusat Jakarta', 'Gudang Cabang Bandung', 'Gudang Produksi Tangerang']));
-  const [deletedCategories, setDeletedCategories] = useState<string[]>(() => getStored('deletedCategories', []));
-  const [deletedWarehouses, setDeletedWarehouses] = useState<string[]>(() => getStored('deletedWarehouses', []));
+  const [customCategories, setCustomCategories] = useState<string[]>(['Tekstil', 'Jersey Custom', 'Accessories', 'Merchandise']);
+  const [customWarehouses, setCustomWarehouses] = useState<string[]>(['Gudang Pusat Jakarta', 'Gudang Cabang Bandung', 'Gudang Produksi Tangerang']);
+  const [deletedCategories, setDeletedCategories] = useState<string[]>([]);
+  const [deletedWarehouses, setDeletedWarehouses] = useState<string[]>([]);
 
   const availableCategories = useMemo(() => {
     const defaults = ['Tekstil', 'Jersey Custom', 'Accessories', 'Merchandise'];
@@ -1228,57 +1185,49 @@ const isNetworkError = (err: any) => {
     if (!customCategories.includes(cat)) {
       const updated = [...customCategories, cat];
       setCustomCategories(updated);
-      setStored('customCategories', updated);
     }
   };
 
   const deleteCategory = (catName: string) => {
     const updated = [...deletedCategories, catName];
     setDeletedCategories(updated);
-    setStored('deletedCategories', updated);
   };
 
   const addCustomWarehouse = (wh: string) => {
     if (!customWarehouses.includes(wh)) {
       const updated = [...customWarehouses, wh];
       setCustomWarehouses(updated);
-      setStored('customWarehouses', updated);
     }
   };
 
   const deleteWarehouse = (whName: string) => {
     const updated = [...deletedWarehouses, whName];
     setDeletedWarehouses(updated);
-    setStored('deletedWarehouses', updated);
   };
 
-  const [stockMovements, setStockMovements] = useState<StockMovement[]>(() => getStored('stockMovements', INITIAL_STOCK_MOVEMENTS));
+  const [stockMovements, setStockMovements] = useState<StockMovement[]>(INITIAL_STOCK_MOVEMENTS);
   const addStockMovement = (mov: Omit<StockMovement, 'id'>) => {
     const newMov: StockMovement = { id: `MOV-${Date.now()}`, ...mov };
     const updated = [newMov, ...stockMovements];
     setStockMovements(updated);
-    setStored('stockMovements', updated);
   };
 
   const updateStockMovement = (id: string, updatedFields: Partial<StockMovement>) => {
     const updated = stockMovements.map(m => m.id === id ? { ...m, ...updatedFields } : m);
     setStockMovements(updated);
-    setStored('stockMovements', updated);
   };
 
   const deleteStockMovement = (id: string) => {
     const updated = stockMovements.filter(m => m.id !== id);
     setStockMovements(updated);
-    setStored('stockMovements', updated);
   };
 
   const clearAllStockMovements = async () => {
     setStockMovements([]);
-    localStorage.removeItem('jerjhon_stockMovements');
   };
 
   // Purchasing & Suppliers
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(() => getStored('purchaseOrders', INITIAL_PURCHASE_ORDERS));
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(INITIAL_PURCHASE_ORDERS);
   const addPurchaseOrder = (poData: Omit<PurchaseOrder, 'id' | 'poNumber'>) => {
     const poNum = `PO-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
     const newPO: PurchaseOrder = {
@@ -1288,62 +1237,56 @@ const isNetworkError = (err: any) => {
     };
     const updated = [newPO, ...purchaseOrders];
     setPurchaseOrders(updated);
-    setStored('purchaseOrders', updated);
     addAuditLog('CREATE_PO', 'Purchasing', `Created Purchase Order ${poNum}`);
   };
 
   const updatePurchaseOrder = (id: string, poData: Partial<PurchaseOrder>) => {
     const updated = purchaseOrders.map(p => p.id === id ? { ...p, ...poData } : p);
     setPurchaseOrders(updated);
-    setStored('purchaseOrders', updated);
   };
 
   const deletePurchaseOrder = (id: string) => {
     const updated = purchaseOrders.filter(p => p.id !== id);
     setPurchaseOrders(updated);
-    setStored('purchaseOrders', updated);
   };
 
-  const [suppliers, setSuppliers] = useState<Supplier[]>(() => getStored('suppliers', INITIAL_SUPPLIERS));
+  const [suppliers, setSuppliers] = useState<Supplier[]>(INITIAL_SUPPLIERS);
 
   // Finance
-  const [chartOfAccounts] = useState<ChartOfAccount[]>(() => getStored('chartOfAccounts', INITIAL_COA));
-  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>(() => getStored('journalEntries', INITIAL_JOURNALS));
+  const [chartOfAccounts] = useState<ChartOfAccount[]>(INITIAL_COA);
+  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>(INITIAL_JOURNALS);
   const addJournalEntry = (je: Omit<JournalEntry, 'id'>) => {
     const newJe: JournalEntry = { id: `JE-${Date.now()}`, ...je };
     const updated = [newJe, ...journalEntries];
     setJournalEntries(updated);
-    setStored('journalEntries', updated);
   };
-  const [fixedAssets] = useState<FixedAsset[]>(() => getStored('fixedAssets', INITIAL_FIXED_ASSETS));
+  const [fixedAssets] = useState<FixedAsset[]>(INITIAL_FIXED_ASSETS);
 
   // R&D & Production
-  const [rndItems] = useState<ProductRND[]>(() => getStored('rndItems', INITIAL_RND));
-  const [productionOrders, setProductionOrders] = useState<ProductionOrder[]>(() => getStored('productionOrders', INITIAL_PRODUCTION_ORDERS));
+  const [rndItems] = useState<ProductRND[]>(INITIAL_RND);
+  const [productionOrders, setProductionOrders] = useState<ProductionOrder[]>(INITIAL_PRODUCTION_ORDERS);
   const addProductionOrder = (poData: Omit<ProductionOrder, 'id'>) => {
     const newPO: ProductionOrder = { id: `PRD-ORD-${Date.now()}`, ...poData };
     const updated = [newPO, ...productionOrders];
     setProductionOrders(updated);
-    setStored('productionOrders', updated);
   };
 
   const updateProductionOrderStatus = (id: string, status: ProductionOrder['status']) => {
     const updated = productionOrders.map(p => p.id === id ? { ...p, status } : p);
     setProductionOrders(updated);
-    setStored('productionOrders', updated);
   };
 
   // Marketing
-  const [kolCampaigns] = useState<KOLCampaign[]>(() => getStored('kolCampaigns', INITIAL_KOL_CAMPAIGNS));
-  const [affiliates] = useState<AffiliatePartner[]>(() => getStored('affiliates', INITIAL_AFFILIATES));
+  const [kolCampaigns] = useState<KOLCampaign[]>(INITIAL_KOL_CAMPAIGNS);
+  const [affiliates] = useState<AffiliatePartner[]>(INITIAL_AFFILIATES);
 
   // Projects & Collaboration
-  const [projects] = useState<Project[]>(() => getStored('projects', INITIAL_PROJECTS));
-  const [tasks] = useState<ProjectTask[]>(() => getStored('tasks', INITIAL_TASKS));
-  const [campaigns] = useState<ContentCampaignItem[]>(() => getStored('campaigns', INITIAL_CAMPAIGNS));
+  const [projects] = useState<Project[]>(INITIAL_PROJECTS);
+  const [tasks] = useState<ProjectTask[]>(INITIAL_TASKS);
+  const [campaigns] = useState<ContentCampaignItem[]>(INITIAL_CAMPAIGNS);
 
   // Approvals & Audit & Notifications
-  const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>(() => getStored('approvalRequests', INITIAL_APPROVALS));
+  const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>(INITIAL_APPROVALS);
   const addApprovalRequest = (req: Omit<ApprovalRequest, 'id' | 'requestDate' | 'status'>) => {
     const newReq: ApprovalRequest = {
       id: `APP-${Date.now()}`,
@@ -1353,16 +1296,14 @@ const isNetworkError = (err: any) => {
     };
     const updated = [newReq, ...approvalRequests];
     setApprovalRequests(updated);
-    setStored('approvalRequests', updated);
   };
 
   const updateApprovalStatus = (id: string, status: 'Approved' | 'Rejected', approverName: string) => {
     const updated = approvalRequests.map(a => a.id === id ? { ...a, status, approver: approverName } : a);
     setApprovalRequests(updated);
-    setStored('approvalRequests', updated);
   };
 
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => getStored('auditLogs', INITIAL_AUDIT_LOGS));
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(INITIAL_AUDIT_LOGS);
   const addAuditLog = (action: string, module: string, details: string) => {
     const newLog: AuditLog = {
       id: `AUD-${Date.now()}`,
@@ -1374,14 +1315,10 @@ const isNetworkError = (err: any) => {
       ipAddress: '127.0.0.1',
       details
     };
-    setAuditLogs(prev => {
-      const updated = [newLog, ...prev];
-      setStored('auditLogs', updated);
-      return updated;
-    });
+    setAuditLogs(prev => [newLog, ...prev]);
   };
 
-  const [notifications, setNotifications] = useState<SystemNotification[]>(() => getStored('notifications', INITIAL_NOTIFICATIONS));
+  const [notifications, setNotifications] = useState<SystemNotification[]>(INITIAL_NOTIFICATIONS);
   const addNotification = (title: string, message: string, type: any = 'info', linkModule: string = 'System') => {
     const newNotif: SystemNotification = {
       id: `NOTIF-${Date.now()}`,
@@ -1392,36 +1329,29 @@ const isNetworkError = (err: any) => {
       read: false,
       linkModule
     };
-    setNotifications(prev => {
-      const updated = [newNotif, ...prev];
-      setStored('notifications', updated);
-      return updated;
-    });
+    setNotifications(prev => [newNotif, ...prev]);
   };
 
   const markNotificationAsRead = (id: string) => {
     const updated = notifications.map(n => n.id === id ? { ...n, read: true } : n);
     setNotifications(updated);
-    setStored('notifications', updated);
   };
 
   const clearAllNotifications = () => {
     setNotifications([]);
-    localStorage.removeItem('jerjhon_notifications');
   };
 
-  const [rawMaterialGroups] = useState<ProductRawMaterialGroup[]>(() => getStored('rawMaterialGroups', INITIAL_RAW_MATERIAL_GROUPS));
-  const [events] = useState<ERPEvent[]>(() => getStored('events', INITIAL_EVENTS));
-  const [stockOpnameRecords, setStockOpnameRecords] = useState<StockOpnameRecord[]>(() => getStored('stockOpnameRecords', []));
+  const [rawMaterialGroups] = useState<ProductRawMaterialGroup[]>(INITIAL_RAW_MATERIAL_GROUPS);
+  const [events] = useState<ERPEvent[]>(INITIAL_EVENTS);
+  const [stockOpnameRecords, setStockOpnameRecords] = useState<StockOpnameRecord[]>([]);
   const addStockOpnameRecord = (rec: Omit<StockOpnameRecord, 'id'>) => {
     const newRec: StockOpnameRecord = { id: `SO-${Date.now()}`, ...rec };
     const updated = [newRec, ...stockOpnameRecords];
     setStockOpnameRecords(updated);
-    setStored('stockOpnameRecords', updated);
   };
 
-  const [sizeOptions, setSizeOptions] = useState<string[]>(() => getStored('sizeOptions', ['S', 'M', 'L', 'XL', 'XXL', '3XL']));
-  const [colorOptions, setColorOptions] = useState<string[]>(() => getStored('colorOptions', ['Merah', 'Putih', 'Hitam', 'Biru Navy', 'Gold']));
+  const [sizeOptions, setSizeOptions] = useState<string[]>(['S', 'M', 'L', 'XL', 'XXL', '3XL']);
+  const [colorOptions, setColorOptions] = useState<string[]>(['Merah', 'Putih', 'Hitam', 'Biru Navy', 'Gold']);
 
   const isStaff = currentUser?.role === 'Staff';
   const isManager = currentUser?.role === 'Manager' || currentUser?.role === 'Director';
@@ -1474,7 +1404,7 @@ const isNetworkError = (err: any) => {
       rawMaterialGroups, events, stockOpnameRecords, addStockOpnameRecord,
       sizeOptions, setSizeOptions, colorOptions, setColorOptions,
       isStaff, isManager, isAdmin,
-      isSupabaseConfigured, isSyncingSupabase, syncAllDataToSupabase,
+      isSupabaseConfigured, isSyncingSupabase, syncAllDataToSupabase, pullSupabaseData,
       formatIDR
     }}>
       {children}

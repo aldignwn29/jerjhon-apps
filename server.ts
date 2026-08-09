@@ -4,6 +4,12 @@ import { createServer as createViteServer } from "vite";
 import nodemailer from "nodemailer";
 import puppeteer from "puppeteer";
 import { GoogleGenAI, Type } from "@google/genai";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+const FALLBACK_SUPABASE_URL = "https://hlybvazspohsussvltvs.supabase.co";
+const FALLBACK_SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhseWJ2YXpzcG9oc3Vzc3ZsdHZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYyNDAyNjAsImV4cCI6MjEwMTgxNjI2MH0.uSYDINDFpsXj9Jn4fMAAvbqcPhTPcRPmmxhz_Jm5Kcs";
 
 export async function createExpressApp() {
   const app = express();
@@ -11,6 +17,80 @@ export async function createExpressApp() {
   app.use(express.json({ limit: "10mb" }));
 
   // API endpoints
+  app.all("/api/supabase-proxy/*", async (req, res) => {
+    try {
+      const pathPart = req.params[0] || "";
+      const queryPart = req.url.includes("?") ? req.url.substring(req.url.indexOf("?")) : "";
+
+      let rawTargetUrl = process.env.VITE_SUPABASE_URL || FALLBACK_SUPABASE_URL;
+      if (rawTargetUrl.includes("zoxsfwfvqfzdfccaohry")) {
+        rawTargetUrl = FALLBACK_SUPABASE_URL;
+      }
+
+      let baseUrl = rawTargetUrl.trim().replace(/^["']|["']$/g, '').replace(/\/+$/, '');
+      let targetUrl = `${baseUrl}/${pathPart}${queryPart}`;
+
+      const headers: Record<string, string> = {};
+      const headersToForward = ['apikey', 'authorization', 'content-type', 'prefer', 'range', 'x-client-info'];
+      for (const h of headersToForward) {
+        if (req.headers[h]) {
+          headers[h] = req.headers[h] as string;
+        }
+      }
+
+      const defaultKey = process.env.VITE_SUPABASE_ANON_KEY || FALLBACK_SUPABASE_KEY;
+      if (!headers['apikey']) {
+        headers['apikey'] = defaultKey;
+      }
+      if (!headers['authorization']) {
+        headers['authorization'] = `Bearer ${defaultKey}`;
+      }
+
+      const fetchOptions: RequestInit = {
+        method: req.method,
+        headers,
+      };
+
+      if (!['GET', 'HEAD'].includes(req.method)) {
+        if (typeof req.body === 'string') {
+          fetchOptions.body = req.body;
+        } else if (req.body && Object.keys(req.body).length > 0) {
+          fetchOptions.body = JSON.stringify(req.body);
+        }
+      }
+
+      let response: Response;
+      try {
+        response = await fetch(targetUrl, fetchOptions);
+      } catch (fetchErr: any) {
+        // If primary failed (e.g. DNS ENOTFOUND or invalid host), retry with fallback
+        if (baseUrl !== FALLBACK_SUPABASE_URL) {
+          console.warn(`[Supabase Proxy] Primary URL ${baseUrl} failed (${fetchErr.message}). Retrying with fallback...`);
+          baseUrl = FALLBACK_SUPABASE_URL;
+          targetUrl = `${baseUrl}/${pathPart}${queryPart}`;
+          headers['apikey'] = FALLBACK_SUPABASE_KEY;
+          headers['authorization'] = `Bearer ${FALLBACK_SUPABASE_KEY}`;
+          response = await fetch(targetUrl, fetchOptions);
+        } else {
+          throw fetchErr;
+        }
+      }
+
+      const contentRange = response.headers.get('content-range');
+      if (contentRange) res.setHeader('content-range', contentRange);
+
+      const contentType = response.headers.get('content-type');
+      if (contentType) res.setHeader('content-type', contentType);
+
+      res.status(response.status);
+      const data = await response.text();
+      res.send(data);
+    } catch (err: any) {
+      console.error("[Supabase Proxy Error]:", err.message || err);
+      res.status(502).json({ error: err.message || "Supabase proxy error", details: "Unable to reach Supabase backend" });
+    }
+  });
+
   app.get("/api/health", (req, res) => {
     res.json({
       status: "online",

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
 import { AppInstallModal } from './AppInstallModal';
+import { SupabaseModal } from './SupabaseModal';
 
 interface HeaderProps {
   onToggleSidebar?: () => void;
@@ -53,6 +54,7 @@ export const Header: React.FC<HeaderProps> = ({
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [showInstallModal, setShowInstallModal] = useState(false);
+  const [showSupabaseModal, setShowSupabaseModal] = useState(false);
 
   const loggedInEmployee = employees?.find(
     e => e.id === currentUser?.id || e.email === currentUser?.email
@@ -220,24 +222,21 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             id="supabase-sync-btn"
             disabled={isSyncingSupabase}
-            onClick={async () => {
-              const res = await syncAllDataToSupabase();
-              alert(res.message);
-            }}
+            onClick={() => setShowSupabaseModal(true)}
             className={`flex items-center justify-center w-9 h-9 lg:w-auto lg:px-3.5 lg:py-2 lg:gap-1.5 rounded-xl border transition-all duration-200 active:scale-95 ${
               isSupabaseConfigured 
                 ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200' 
                 : 'bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200'
             }`}
-            title={isSupabaseConfigured ? "Supabase Terhubung - Klik untuk Sync Semua Data ke Supabase" : "Supabase Belum Dikonfigurasi"}
+            title={isSupabaseConfigured ? "Supabase Terhubung - Klik untuk Kelola & Sinkronkan Data Supabase" : "Supabase Belum Dikonfigurasi - Klik untuk Hubungkan Proyek Supabase"}
           >
             {isSyncingSupabase ? (
               <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
             ) : (
-              <RefreshCw className="w-4 h-4 shrink-0" />
+              <Database className="w-4 h-4 shrink-0 text-emerald-600" />
             )}
             <span className="hidden lg:inline text-xs font-bold">
-              {isSupabaseConfigured ? 'Sync Supabase' : 'Supabase Off'}
+              {isSupabaseConfigured ? 'Supabase Database' : 'Supabase (Off)'}
             </span>
           </button>
 
@@ -417,6 +416,9 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* App Install Guide Modal */}
       <AppInstallModal isOpen={showInstallModal} onClose={() => setShowInstallModal(false)} />
+
+      {/* Supabase Connection Modal */}
+      <SupabaseModal isOpen={showSupabaseModal} onClose={() => setShowSupabaseModal(false)} />
     </header>
   );
 };
