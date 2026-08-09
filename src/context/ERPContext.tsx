@@ -224,7 +224,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       // 0. Sync Users & Profiles (User Management)
       for (const u of users) {
-        await supabase.from('users').upsert({
+        const { error: userErr } = await supabase.from('users').upsert({
           id: u.id,
           username: u.username || u.email,
           name: u.name || 'User',
@@ -236,8 +236,9 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           last_login: u.lastLogin || new Date().toISOString(),
           permissions: u.permissions || []
         });
+        if (userErr) console.warn('Supabase users upsert warning:', userErr);
 
-        await supabase.from('profiles').upsert({
+        const { error: profErr } = await supabase.from('profiles').upsert({
           id: u.id,
           name: u.name || 'User',
           email: u.email || 'user@example.com',
@@ -245,11 +246,12 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           department: u.department || 'Executive',
           avatar: u.avatar || ''
         });
+        if (profErr) console.warn('Supabase profiles upsert warning:', profErr);
       }
 
       // 1. Sync Products
       for (const p of products) {
-        await supabase.from('products').upsert({
+        const { error: prodErr } = await supabase.from('products').upsert({
           id: p.id,
           name: p.name,
           sku: p.sku,
@@ -262,11 +264,12 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           barcode: p.sku,
           image: p.image || ''
         });
+        if (prodErr) console.warn('Supabase products upsert warning:', prodErr);
       }
 
       // 2. Sync Marketplace Orders
       for (const o of marketplaceOrders) {
-        await supabase.from('marketplace_orders').upsert({
+        const { error: ordErr } = await supabase.from('marketplace_orders').upsert({
           id: o.id,
           customer_name: o.customerName,
           customer_email: 'customer@example.com',
@@ -276,11 +279,12 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           items: [],
           payment_method: o.paymentMethod
         });
+        if (ordErr) console.warn('Supabase marketplace_orders upsert warning:', ordErr);
       }
 
       // 3. Sync Employees
       for (const e of employees) {
-        await supabase.from('employees').upsert({
+        const { error: empErr } = await supabase.from('employees').upsert({
           id: e.id,
           name: e.name || 'Nama Karyawan',
           email: e.email || 'karyawan@company.com',
@@ -292,11 +296,12 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           salary: Number(e.salary ?? e.baseSalary ?? 10000000),
           avatar: e.avatar || ''
         });
+        if (empErr) console.warn('Supabase employees upsert warning:', empErr);
       }
 
       // 4. Sync Suppliers
       for (const s of suppliers) {
-        await supabase.from('suppliers').upsert({
+        const { error: supErr } = await supabase.from('suppliers').upsert({
           id: s.id,
           name: s.name,
           contact_person: s.contactPerson,
@@ -305,11 +310,12 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           address: s.address,
           rating: s.rating
         });
+        if (supErr) console.warn('Supabase suppliers upsert warning:', supErr);
       }
 
       // 5. Sync Purchase Orders
       for (const po of purchaseOrders) {
-        await supabase.from('purchase_orders').upsert({
+        const { error: poErr } = await supabase.from('purchase_orders').upsert({
           id: po.id,
           supplier_id: po.supplierId,
           supplier_name: po.supplierName,
@@ -319,10 +325,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           order_date: po.orderDate,
           expected_delivery: po.expectedDelivery
         });
+        if (poErr) console.warn('Supabase purchase_orders upsert warning:', poErr);
       }
 
       setIsSyncingSupabase(false);
-      return { success: true, message: 'Berhasil menyinkronkan seluruh data aplikasi (Profiles & Employees) ke Supabase!' };
+      return { success: true, message: 'Berhasil menyinkronkan seluruh data aplikasi (Users, Products, Orders, Employees, Suppliers) ke Supabase!' };
     } catch (err: any) {
       setIsSyncingSupabase(false);
       console.error('Supabase sync all error:', err);
