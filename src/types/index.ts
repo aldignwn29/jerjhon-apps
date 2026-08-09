@@ -52,6 +52,9 @@ export interface Employee {
   address: string;
   kpiScore?: number; // 0 - 100
   education: string;
+  role?: string;
+  hireDate?: string;
+  salary?: number;
   fcmToken?: string;
 }
 

@@ -222,6 +222,18 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!isSupabaseConfigured) return { success: false, message: 'Supabase belum dikonfigurasi / URL placeholder.' };
     setIsSyncingSupabase(true);
     try {
+      // 0. Sync Profiles (Users)
+      for (const u of users) {
+        await supabase.from('profiles').upsert({
+          id: u.id,
+          name: u.name || 'User',
+          email: u.email || 'user@example.com',
+          role: u.role || 'Admin',
+          department: u.department || 'Executive',
+          avatar: u.avatar || ''
+        });
+      }
+
       // 1. Sync Products
       for (const p of products) {
         await supabase.from('products').upsert({
@@ -257,14 +269,14 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       for (const e of employees) {
         await supabase.from('employees').upsert({
           id: e.id,
-          name: e.name,
-          email: e.email,
-          role: e.role,
-          department: e.department,
-          status: e.status,
-          phone: e.phone,
-          hire_date: e.hireDate,
-          salary: e.salary,
+          name: e.name || 'Nama Karyawan',
+          email: e.email || 'karyawan@company.com',
+          role: e.role || e.position || 'Staff',
+          department: e.department || 'Executive',
+          status: e.status || 'Active',
+          phone: e.phone || '-',
+          hire_date: e.hireDate || e.joinDate || '2020-01-01',
+          salary: Number(e.salary ?? e.baseSalary ?? 10000000),
           avatar: e.avatar || ''
         });
       }
@@ -297,7 +309,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       setIsSyncingSupabase(false);
-      return { success: true, message: 'Berhasil menyinkronkan seluruh data aplikasi ke Supabase!' };
+      return { success: true, message: 'Berhasil menyinkronkan seluruh data aplikasi (Profiles & Employees) ke Supabase!' };
     } catch (err: any) {
       setIsSyncingSupabase(false);
       console.error('Supabase sync all error:', err);
@@ -384,18 +396,40 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (empRes.data && empRes.data.length > 0) {
           const loadedEmps = empRes.data.map((e: any) => ({
             id: e.id,
+            nik: '3171011212900001',
             name: e.name,
             email: e.email,
+            phone: e.phone || '-',
+            gender: 'L',
+            avatar: e.avatar || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80',
+            department: e.department || 'Executive',
+            position: e.role || 'System Administrator',
+            supervisor: 'CEO',
+            joinDate: e.hire_date || '2020-01-01',
+            status: e.status || 'Tetap',
+            npwp: '-',
+            bpjsKesehatan: '-',
+            bpjsKetenagakerjaan: '-',
+            bankName: 'BCA',
+            bankAccountNumber: '1234567890',
+            baseSalary: Number(e.salary) || 25000000,
+            fixedAllowance: 0,
+            transportAllowance: 0,
+            mealAllowance: 0,
+            address: 'Bandung',
+            kpiScore: 100,
+            education: 'S1',
             role: e.role,
-            department: e.department,
-            status: e.status,
-            phone: e.phone,
-            hireDate: e.hire_date,
             salary: Number(e.salary),
-            avatar: e.avatar
+            hireDate: e.hire_date
           }));
           setEmployees(loadedEmps);
           setStored('employees', loadedEmps);
+        } else {
+          // Auto sync initial employees and profiles data to Supabase if empty
+          setTimeout(() => {
+            syncAllDataToSupabase();
+          }, 1000);
         }
 
         if (supRes.data && supRes.data.length > 0) {
@@ -496,6 +530,17 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setUsers(updated);
     setStored('users', updated);
     addAuditLog('CREATE_USER', 'Admin', `Created user account: ${newUser.name}`);
+
+    if (isSupabaseConfigured) {
+      Promise.resolve(supabase.from('profiles').upsert({
+        id: newUser.id,
+        name: newUser.name || 'User',
+        email: newUser.email || 'user@example.com',
+        role: newUser.role || 'Admin',
+        department: newUser.department || 'Executive',
+        avatar: newUser.avatar || ''
+      })).catch(err => console.error('Supabase profile create error:', err));
+    }
   };
 
   const updateUser = (id: string, userData: Partial<User>) => {
@@ -507,12 +552,30 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCurrentUser(updatedCurrent);
       setStored('currentUser', updatedCurrent);
     }
+
+    if (isSupabaseConfigured) {
+      const targetUser = updated.find(u => u.id === id);
+      if (targetUser) {
+        Promise.resolve(supabase.from('profiles').upsert({
+          id: targetUser.id,
+          name: targetUser.name,
+          email: targetUser.email,
+          role: targetUser.role || 'Admin',
+          department: targetUser.department || 'Executive',
+          avatar: targetUser.avatar || ''
+        })).catch(err => console.error('Supabase profile update error:', err));
+      }
+    }
   };
 
   const deleteUser = (id: string) => {
     const updated = users.filter(u => u.id !== id);
     setUsers(updated);
     setStored('users', updated);
+
+    if (isSupabaseConfigured) {
+      Promise.resolve(supabase.from('profiles').delete().eq('id', id)).catch(err => console.error('Supabase profile delete error:', err));
+    }
   };
 
   // Company Profile
@@ -531,6 +594,21 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const updated = [...employees, newEmp];
     setEmployees(updated);
     setStored('employees', updated);
+
+    if (isSupabaseConfigured) {
+      Promise.resolve(supabase.from('employees').upsert({
+        id: newEmp.id,
+        name: newEmp.name || 'Nama Karyawan',
+        email: newEmp.email || 'karyawan@company.com',
+        role: newEmp.role || newEmp.position || 'Staff',
+        department: newEmp.department || 'Executive',
+        status: newEmp.status || 'Active',
+        phone: newEmp.phone || '-',
+        hire_date: newEmp.hireDate || newEmp.joinDate || '2020-01-01',
+        salary: Number(newEmp.salary ?? newEmp.baseSalary ?? 10000000),
+        avatar: newEmp.avatar || ''
+      })).catch(err => console.error('Supabase employee add error:', err));
+    }
 
     if (credentials?.username) {
       addUser({
@@ -552,12 +630,34 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const updated = employees.map(e => e.id === id ? { ...e, ...empData } : e);
     setEmployees(updated);
     setStored('employees', updated);
+
+    if (isSupabaseConfigured) {
+      const targetEmp = updated.find(e => e.id === id);
+      if (targetEmp) {
+        Promise.resolve(supabase.from('employees').upsert({
+          id: targetEmp.id,
+          name: targetEmp.name || 'Nama Karyawan',
+          email: targetEmp.email || 'karyawan@company.com',
+          role: targetEmp.role || targetEmp.position || 'Staff',
+          department: targetEmp.department || 'Executive',
+          status: targetEmp.status || 'Active',
+          phone: targetEmp.phone || '-',
+          hire_date: targetEmp.hireDate || targetEmp.joinDate || '2020-01-01',
+          salary: Number(targetEmp.salary ?? targetEmp.baseSalary ?? 10000000),
+          avatar: targetEmp.avatar || ''
+        })).catch(err => console.error('Supabase employee update error:', err));
+      }
+    }
   };
 
   const deleteEmployee = (id: string) => {
     const updated = employees.filter(e => e.id !== id);
     setEmployees(updated);
     setStored('employees', updated);
+
+    if (isSupabaseConfigured) {
+      Promise.resolve(supabase.from('employees').delete().eq('id', id)).catch(err => console.error('Supabase employee delete error:', err));
+    }
   };
 
   // Attendance
